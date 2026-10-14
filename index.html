@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1a14" />
+    <meta name="description" content="7, 11, Doubles — shake your phone and throw 3D dice with friends." />
+    <title>7, 11, Doubles</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage"></div>
+
+      <header class="topbar">
+        <div class="room">
+          <span class="room-label">Room</span>
+          <span id="room-code" class="room-code">…</span>
+          <button id="copy-invite" class="chip-btn" type="button" hidden>Copy invite</button>
+        </div>
+        <button id="mute" class="icon-btn" type="button" aria-label="Mute sounds">🔊</button>
+      </header>
+      <ul id="players" class="players" aria-label="Players"></ul>
+      <div id="banner" class="banner" aria-live="polite"></div>
+
+      <div id="callout" class="callout" aria-live="assertive">
+        <div class="callout-main"></div>
+        <div class="callout-sub"></div>
+      </div>
+
+      <footer class="bottom">
+        <ol id="log" class="log" aria-label="Recent rolls"></ol>
+        <div id="hint" class="hint" aria-live="polite"></div>
+        <div class="actions">
+          <button id="enable-motion" class="secondary" type="button" hidden>📳 Enable shake to roll</button>
+          <div id="zone" class="zone" role="button" tabindex="0" aria-label="Hold and shake to roll the dice">
+            <div class="zone-title"></div>
+            <div class="zone-sub"></div>
+          </div>
+          <button id="quick-roll" class="secondary small" type="button" hidden>Quick roll</button>
+        </div>
+      </footer>
+
+      <section id="lobby" class="card-layer" hidden>
+        <div class="card">
+          <h1>7 · 11 · Doubles</h1>
+          <p class="rules">Roll <b>7</b> or <b>11</b> for <b>+1</b>. Roll <b>doubles</b> for <b>+2</b>. Hit and you roll again — miss and the dice pass on.</p>
+          <ul id="lobby-players" class="lobby-players"></ul>
+          <div id="host-controls">
+            <label class="target">First to
+              <select id="target"></select>
+              points
+            </label>
+            <button id="start" class="primary" type="button">Start game</button>
+          </div>
+          <p id="lobby-wait" class="muted">Waiting for the host to start…</p>
+        </div>
+      </section>
+
+      <section id="match-over" class="card-layer" hidden>
+        <div class="card">
+          <div class="trophy">🏆</div>
+          <h1 id="winner"></h1>
+          <ul id="final-scores" class="lobby-players"></ul>
+          <button id="rematch" class="primary" type="button">Rematch</button>
+          <p id="rematch-wait" class="muted">Waiting for the host…</p>
+        </div>
+      </section>
+
+      <section id="name-prompt" class="card-layer" hidden>
+        <form class="card" id="name-form">
+          <h1>7 · 11 · Doubles</h1>
+          <label for="name-input">Your name</label>
+          <input id="name-input" maxlength="24" autocomplete="nickname" required />
+          <button class="primary" type="submit">Join table</button>
+        </form>
+      </section>
+
+      <div id="status" class="status" hidden></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
