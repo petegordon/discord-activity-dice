@@ -1,6 +1,6 @@
 # Discord Activity Dice — Plan & Specification
 
-A lightweight multiplayer **two-dice "7 or 11" game** with 3D dice. It runs **as a Discord Activity** and **as a standalone web app** at **https://dice.jimandi.love**. On mobile, players **physically shake and throw** the dice using device motion; every player sees the same dice tumble and land on the same faces in real time.
+A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It runs **as a Discord Activity** and **as a standalone web app** at **https://dice.jimandi.love**. On mobile, players **physically shake and throw** the dice using device motion; every player sees the same dice tumble and land on the same faces in real time.
 
 **Stack:** Three.js (rendering) · cannon-es (physics) · DeviceMotion API (shake & throw) · PeerJS / WebRTC (peer-to-peer sync) · Cloudflare Pages + Workers (hosting, Discord OAuth token exchange, optional fallback relay) · Vite + TypeScript (build)
 
@@ -10,7 +10,7 @@ A lightweight multiplayer **two-dice "7 or 11" game** with 3D dice. It runs **as
 
 ### Goals
 - A shared 3D table with **two six-sided dice (2d6)**.
-- A turn-based **"7 or 11"** game (craps-style come-out/point rules, §6).
+- A turn-based **"7, 11, Doubles"** points race (§6).
 - **Shake-and-throw with device motion** on phones; mouse/touch flick fallback everywhere else (§5).
 - Every participant sees **the same animation and the same result**.
 - Run inside a Discord voice channel as an Activity, *and* at `dice.jimandi.love` with a shareable room link.
@@ -173,43 +173,49 @@ The gesture only shapes the **throw** (direction, speed, spin). The host adds se
 
 ---
 
-## 6. Game: "7 or 11"
+## 6. Game: "7, 11, Doubles"
 
-Classic craps pass-line rules with two dice, no betting.
+A points race with two dice.
 
 ### 6.1 Rules
 - Players take turns as the **shooter** in join order.
-- **Come-out roll:**
-  - **7 or 11 → Natural, shooter wins** the round (+1 point). Shooter rolls a new come-out.
-  - **2, 3, or 12 → Craps, shooter loses** the round. Dice pass to the next player.
-  - **4, 5, 6, 8, 9, 10 → that number becomes the Point.**
-- **Point phase:** shooter keeps rolling until:
-  - they roll the **Point again → win** (+1 point), shooter rolls a new come-out, or
-  - they roll a **7 → "Seven out", lose**; dice pass to the next player.
-- **Match end:** first to **5 points** wins (host-configurable: 3 / 5 / 10, or unlimited "casual" mode).
-- Players joining mid-match are appended to the turn order with 0 points.
-- If the shooter disconnects, the dice pass to the next player.
+- Each roll:
+  - **Hit**: a total of **7**, a total of **11**, or **doubles** (both dice show the same face) → shooter scores **+1 point** and **rolls again**.
+  - **Miss**: anything else → the turn ends and the dice pass to the next player.
+- A roll scores at most 1 point. The three hit types can't overlap anyway: 7 and 11 are odd and doubles always total an even number.
+- **Match end:** the first player to reach the target wins immediately, even mid-streak. The default target is **10 points**; the host can pick 5, 10 or 21 in the lobby.
+- **Hit chance:** 7 is 6/36, 11 is 2/36 and doubles are 6/36, so a roll hits 14/36 ≈ **39%** of the time. An average turn scores about 0.64 points, so a 10-point match with 2–4 players takes roughly 15–30 turns.
+- Players joining mid-match go to the end of the turn order with 0 points.
+- If the shooter disconnects, the dice pass to the next player. If only one player is left, the match pauses in the lobby.
+- After a match, the host can start a **rematch**: scores reset and the first shooter rotates.
 
 ### 6.2 State
 
 ```ts
+type HitKind = "seven" | "eleven" | "doubles";
+
 type GameState = {
-  phase: "lobby" | "comeout" | "point" | "rolling" | "matchOver";
+  phase: "lobby" | "awaitingThrow" | "rolling" | "matchOver";
   shooterId: string | null;
-  turnOrder: string[];            // player ids
-  point: number | null;           // 4,5,6,8,9,10 during point phase
+  turnOrder: string[];             // player ids
   scores: Record<string, number>;
-  target: number | null;          // points to win; null = casual
+  target: number;                  // points to win (5 | 10 | 21)
+  streak: number;                  // consecutive hits in the current turn
+  winnerId: string | null;
   lastRoll: { rollId: string; shooter: string; faces: [number, number]; total: number;
-              outcome: "natural" | "craps" | "point_set" | "point_hit" | "seven_out" | "no_decision" } | null;
-  history: GameState["lastRoll"][]; // last 20 rolls
+              hit: HitKind | null } | null;
+  history: NonNullable<GameState["lastRoll"]>[]; // last 20 rolls
 };
 ```
 
-The host runs a pure reducer `applyRoll(state, faces) → state` — trivially unit-testable.
+The host runs a pure reducer `applyRoll(state, faces) → state`, which is easy to unit-test. `classify(faces) → HitKind | null` checks doubles first, then a total of 7 or 11.
 
 ### 6.3 Announcements
-Big on-screen callouts after each roll: **"YO-LEVEN!"**, **"SEVEN — WINNER!"**, **"CRAPS!"**, **"POINT IS 6"**, **"SEVEN OUT"**, **"HIT THE POINT!"**.
+After each roll, a large callout appears on screen:
+- **"SEVEN!"**, **"YO-LEVEN!"**, **"DOUBLE 4s!"**: point scored, roll again
+- streak callouts such as **"3 IN A ROW!"**
+- **"Miss — dice to Bob"**
+- **"ALICE WINS!"** with confetti at match end
 
 ---
 
@@ -227,7 +233,7 @@ Physics engines aren't bit-for-bit deterministic across devices, so clients don'
 Shooter's client shows dice leaving their "hand" immediately on throw (local prediction) and seamlessly hands over to the authoritative `roll` (~1 RTT later) — throw arc in the first ~100 ms is the same since it's derived from the same `ThrowInput`.
 
 ### 7.2 Physics
-- **cannon-es**: dice as `Box` bodies with slightly rounded visual meshes, ground plane, and walls forming a craps-style table with a back wall dice bounce off.
+- **cannon-es**: dice as `Box` bodies with slightly rounded visual meshes, ground plane, and walls forming a table with a back wall the dice bounce off.
 - Fixed step 1/120 s; sleeping enabled; settled when both bodies sleep or after 6 s timeout (if cocked against a wall, nudge and re-settle).
 - Face detection: local face normal with the greatest dot product against world `+Y`.
 
@@ -245,16 +251,16 @@ Shooter's client shows dice leaving their "hand" immediately on throw (local pre
 ┌─────────────────────────────────────────────┐
 │ 🎲 Room ABC123     Alice 3 · Bob 1 · Cara 0  │  ← players + scores, shooter highlighted
 ├─────────────────────────────────────────────┤
-│        POINT: 6        (Bob is shooting)    │  ← phase banner
+│   Bob is shooting · streak 2 · first to 10  │  ← phase banner
 │                                             │
-│              [ 3D craps table ]             │
+│              [ 3D dice table ]              │
 │                                             │
 ├─────────────────────────────────────────────┤
 │   ╭─────────────────────────────────╮       │
 │   │  HOLD & SHAKE  — flick to throw │       │  ← shooter only: cup / shake zone
 │   ╰─────────────────────────────────╯       │
 ├─────────────────────────────────────────────┤
-│ Bob: 4 + 2 = 6 → Point is 6                 │  ← roll log
+│ Bob: 3 + 3 = 6 → DOUBLES! +1, roll again    │  ← roll log
 └─────────────────────────────────────────────┘
 ```
 
@@ -293,7 +299,7 @@ discord-activity-dice/
 │   │   ├── physics.ts      ← cannon-es world, table, simulate-to-rest
 │   │   └── roller.ts       ← predetermined-result orchestration
 │   ├── game/
-│   │   └── sevenEleven.ts  ← pure GameState reducer
+│   │   └── sevenElevenDoubles.ts ← pure GameState reducer
 │   ├── audio.ts            ← rattle + impact sounds, haptics
 │   ├── scene.ts            ← renderer, camera, lights, table, cup view
 │   └── ui.ts               ← DOM overlay, lobby, banners, log
@@ -328,7 +334,7 @@ discord-activity-dice/
 | **M3** | Shake & throw | `motion.ts` shake energy, throw detection, cup view, audio + haptics, tuning pass on real phones |
 | **M4** | Predetermined results | Host-picked faces + mesh re-orientation, replay from `BodyInit` |
 | **M5** | Standalone multiplayer | PeerJS transport, rooms, host election, `shake` broadcast, shared rolls, invite link |
-| **M6** | 7 or 11 game | Reducer, turn order, lobby, scoring, callouts |
+| **M6** | 7, 11, Doubles game | Reducer, turn order, lobby, scoring, callouts |
 | **M7** | Discord Activity | Developer Portal app, `/api/token`, SDK auth, URL mappings, `instanceId` rooms |
 | **M8** | Resilience & polish | Host migration, Durable Object relay fallback, TURN, mobile perf tuning |
 
@@ -336,11 +342,11 @@ discord-activity-dice/
 
 ## 12. Testing
 
-- **Unit (Vitest):** `sevenEleven` reducer (every total in come-out and point phases, turn passing, match end), face detection, mesh re-orientation math (every face → every target face), throw normalization/clamping, shake/throw detector against recorded motion traces, host election ordering.
+- **Unit (Vitest):** `sevenElevenDoubles` reducer (all 36 face combinations classified, streaks, turn passing, win mid-streak, rematch), face detection, mesh re-orientation math (every face → every target face), throw normalization/clamping, shake/throw detector against recorded motion traces, host election ordering.
 - **Motion fixtures:** record real `devicemotion` traces (shakes, flicks, lazy drops, walking around) from iOS and Android as JSON, replay them in tests to tune thresholds without a phone in hand.
 - **Integration:** multiple local tabs in standalone mode — identical faces, scores, turn order.
 - **Device:** iPhone (Safari + Discord app), Android (Chrome + Discord app), desktop Discord.
-- **Network:** `?transport=relay`, simulated host disconnect mid-point.
+- **Network:** `?transport=relay`, simulated host disconnect mid-turn.
 
 ---
 
@@ -357,5 +363,4 @@ discord-activity-dice/
 | Mobile GPU performance | Shadow toggle, DPR cap, simple geometry |
 
 **Open questions**
-1. Default match target: 5 points?
-2. Should a natural (7/11) on the come-out keep the dice with the shooter (classic craps, as specified) or pass them after every round?
+1. Should doubles score more than 7 or 11 (e.g. double 6s = 2 points)? v1 scores every hit as 1 point.
