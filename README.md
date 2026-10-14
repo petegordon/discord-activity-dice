@@ -1,7 +1,7 @@
 # Discord Activity Dice
 
-Multiplayer 3D dice roller that runs as a **Discord Activity** or as a **standalone web app**.
+A multiplayer two-dice **"7 or 11"** game with 3D dice that you shake and throw with your phone. Runs as a **Discord Activity** or standalone at **https://dice.jimandi.love**.
 
-Built with Three.js, cannon-es, PeerJS/WebRTC, and Cloudflare Pages + Workers.
+Built with Three.js, cannon-es, DeviceMotion, PeerJS/WebRTC, and Cloudflare Pages + Workers.
 
 **Status:** Planning. See [PLAN.md](PLAN.md) for the full plan and specification.

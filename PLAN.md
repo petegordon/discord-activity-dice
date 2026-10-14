@@ -1,24 +1,26 @@
 # Discord Activity Dice — Plan & Specification
 
-A lightweight multiplayer 3D dice roller that runs **as a Discord Activity** and **as a standalone web app** outside Discord. Players in the same room see the same dice tumble and land on the same faces, in real time.
+A lightweight multiplayer **two-dice "7 or 11" game** with 3D dice. It runs **as a Discord Activity** and **as a standalone web app** at **https://dice.jimandi.love**. On mobile, players **physically shake and throw** the dice using device motion; every player sees the same dice tumble and land on the same faces in real time.
 
-**Stack:** Three.js (rendering) · cannon-es (physics) · PeerJS / WebRTC (peer-to-peer sync) · Cloudflare Pages + Workers (hosting, Discord OAuth token exchange, optional fallback relay) · Vite + TypeScript (build)
+**Stack:** Three.js (rendering) · cannon-es (physics) · DeviceMotion API (shake & throw) · PeerJS / WebRTC (peer-to-peer sync) · Cloudflare Pages + Workers (hosting, Discord OAuth token exchange, optional fallback relay) · Vite + TypeScript (build)
 
 ---
 
 ## 1. Goals & Non-Goals
 
 ### Goals
-- Roll common polyhedral dice (d4, d6, d8, d10, d12, d20, d100) in a shared 3D scene.
+- A shared 3D table with **two six-sided dice (2d6)**.
+- A turn-based **"7 or 11"** game (craps-style come-out/point rules, §6).
+- **Shake-and-throw with device motion** on phones; mouse/touch flick fallback everywhere else (§5).
 - Every participant sees **the same animation and the same result**.
-- Run inside a Discord voice channel as an Activity, *and* at a plain URL with a shareable room link.
+- Run inside a Discord voice channel as an Activity, *and* at `dice.jimandi.love` with a shareable room link.
 - Zero or near-zero server cost: static hosting + peer-to-peer data.
-- Mobile-friendly (Discord mobile clients host Activities too).
 
 ### Non-Goals (v1)
-- Full rules engines for specific games (D&D, Yahtzee scoring, etc.) — a simple "dice roll game" mode only (see §6).
-- Persistent accounts, history beyond the current session, or leaderboards.
-- Anti-cheat beyond host-authoritative rolls.
+- Dice other than d6, or more than two dice.
+- Private / hidden rolls — all rolls are public.
+- Betting, currency, persistent accounts, or cross-session leaderboards.
+- Anti-cheat beyond host-authoritative results.
 
 ---
 
@@ -26,33 +28,33 @@ A lightweight multiplayer 3D dice roller that runs **as a Discord Activity** and
 
 ```
                     ┌────────────────────────────────────┐
-                    │      Cloudflare Pages (static)     │
-                    │  index.html, JS bundle, assets     │
+                    │  Cloudflare Pages                  │
+                    │  https://dice.jimandi.love         │
                     └───────────────┬────────────────────┘
                                     │
           ┌─────────────────────────┼──────────────────────────┐
           │                         │                          │
  ┌────────▼────────┐       ┌────────▼────────┐       ┌─────────▼────────┐
- │  Client (host)  │◄─────►│ Client (peer B) │◄─────►│ Client (peer C)  │
- │ Three.js + phys │ WebRTC│                 │       │                  │
+ │  Client (host)  │◄─────►│ Client (shooter)│◄─────►│ Client (peer C)  │
+ │ Three.js + phys │ WebRTC│ DeviceMotion    │       │                  │
  └────────┬────────┘ data  └─────────────────┘       └──────────────────┘
           │        channels (star topology via host)
           │
- ┌────────▼──────────────────────────┐   ┌────────────────────────────────┐
- │ PeerJS signaling server           │   │ Cloudflare Worker  /api/*      │
- │ (PeerJS cloud or self-hosted)     │   │  - POST /api/token  (Discord   │
- │ + STUN / TURN                     │   │    OAuth code → access_token)  │
- └───────────────────────────────────┘   │  - /api/relay  (Durable Object │
-                                         │    WebSocket fallback, §4.4)   │
-                                         └────────────────────────────────┘
+ ┌────────▼──────────────────────────┐   ┌────────────────────────────────────┐
+ │ PeerJS signaling server           │   │ Cloudflare Worker                  │
+ │ + STUN / TURN                     │   │ route: dice.jimandi.love/api/*     │
+ └───────────────────────────────────┘   │  - POST /api/token  (Discord OAuth)│
+                                         │  - /api/relay/:room (Durable Object│
+                                         │    WebSocket fallback, §4.4)       │
+                                         └────────────────────────────────────┘
 ```
 
 ### Topology: host-authoritative star
 - The **first player** in a room becomes host. All other peers connect to the host's PeerJS ID.
-- The host owns the **roll seed and final results**; peers render the same deterministic simulation.
+- The host owns **game state, turn order, and final roll results**. The *shooter* (whoever's turn it is) supplies the throw from their device; the host turns it into the authoritative roll.
 - If the host leaves, the peer with the lowest join order is promoted (§4.3).
 
-Star over full mesh: simpler state ownership, O(n) connections, fine for the expected room size (≤ 25 players, Discord Activity practical limit).
+Note: *host* (network authority) and *shooter* (current player's turn) are separate roles.
 
 ---
 
@@ -60,61 +62,61 @@ Star over full mesh: simpler state ownership, O(n) connections, fine for the exp
 
 | Mode | Entry | Identity | Room ID |
 |---|---|---|---|
-| **Discord Activity** | Launched from a voice channel | Discord user (via Embedded App SDK + OAuth) | Derived from `instanceId` provided by the SDK |
-| **Standalone web** | `https://<domain>/?room=<code>` | Guest name typed by player (stored in `localStorage`) | 6-char code in URL; generated if absent |
+| **Discord Activity** | Launched from a voice channel | Discord user (Embedded App SDK + OAuth) | `discordSdk.instanceId` |
+| **Standalone web** | `https://dice.jimandi.love/?room=<code>` | Guest name typed by player (`localStorage`) | 6-char code in URL; generated if absent |
 
-Detection: if the page is loaded with `frame_id` / `instance_id` query params (Discord injects these), initialize the Discord SDK; otherwise run standalone.
+Detection: if Discord's `frame_id` / `instance_id` query params are present, initialize the Discord SDK; otherwise run standalone.
 
-### 3.1 Discord Activity specifics
-- Use `@discord/embedded-app-sdk`: `ready()` → `authorize()` (scopes: `identify`, `guilds`) → `POST /api/token` on our Worker → `authenticate()`.
-- Discord Activities run inside an iframe behind Discord's proxy (`<app_id>.discordsays.com`). **All outbound network requests must go through URL Mappings** configured in the Developer Portal:
-  - `/` → Cloudflare Pages domain
-  - `/api` → Cloudflare Worker
+### 3.1 Domain & hosting
+- Cloudflare Pages project with custom domain **`dice.jimandi.love`** (`jimandi.love` zone on Cloudflare, CNAME `dice` → `<project>.pages.dev`).
+- Worker bound to the route `dice.jimandi.love/api/*` so the app and API share one origin (no CORS, single Discord URL mapping target).
+- HTTPS is required for DeviceMotion and WebRTC — provided by Cloudflare.
+
+### 3.2 Discord Activity specifics
+- `@discord/embedded-app-sdk`: `ready()` → `authorize()` (scopes: `identify`, `guilds`) → `POST /api/token` → `authenticate()`.
+- Activities run in an iframe behind Discord's proxy (`<app_id>.discordsays.com`); all outbound requests must use **URL Mappings** in the Developer Portal:
+  - `/` → `dice.jimandi.love`
   - `/peerjs` → PeerJS signaling host
-- Use `patchUrlMappings()` from the SDK so libraries (PeerJS) that build absolute URLs are rewritten through the proxy.
-- Room ID = `discordSdk.instanceId` so everyone in the same Activity instance lands in the same room automatically.
-- Display names/avatars come from the authenticated user + `getInstanceConnectedParticipants()`.
+- Call `patchUrlMappings()` so PeerJS's absolute URLs are rewritten through the proxy.
+- Display names/avatars from the authenticated user + `getInstanceConnectedParticipants()`.
 
 ---
 
 ## 4. Networking
 
 ### 4.1 Signaling & peer IDs
-- PeerJS peer IDs are namespaced: `dice-<roomId>-host` for the host, random UUID for others.
-- Join flow:
-  1. Attempt to register as `dice-<roomId>-host`.
-  2. If the ID is taken (`unavailable-id` error), register with a random ID and connect to the host ID.
-- v1 uses the public PeerJS cloud server for standalone mode; a **self-hosted PeerJS server** (or Worker-based signaling) is a stretch goal and likely required for Discord (proxy mapping + reliability).
+- Peer IDs: `dice-<roomId>-host` for the host, random UUID for others.
+- Join: try to register as `dice-<roomId>-host`; on `unavailable-id`, register randomly and connect to the host ID.
+- Standalone v1 may use the public PeerJS cloud; a **self-hosted PeerJS server** (or Worker-based signaling) is expected for Discord (proxy mapping + reliability).
 
 ### 4.2 Message protocol (JSON over reliable data channel)
 
 ```ts
 type Msg =
-  | { t: "hello";    player: Player }                         // peer → host on connect
-  | { t: "state";    players: Player[]; hostId: string;       // host → all, on any change
-                     dice: DieSpec[]; history: RollResult[] }
-  | { t: "roll_req"; dice: DieSpec[] }                         // peer → host
-  | { t: "roll";     rollId: string; seed: number;             // host → all
-                     roller: string; dice: DieSpec[];
-                     initial: BodyInit[] }
-  | { t: "result";   rollId: string; faces: number[] }         // host → all (authoritative)
-  | { t: "chat";     from: string; text: string }              // optional
+  | { t: "hello";     player: Player }                                   // peer → host
+  | { t: "state";     players: Player[]; hostId: string; game: GameState } // host → all
+  | { t: "shake";     shooter: string; intensity: number;                // shooter → host → all (~15 Hz, unreliable ok)
+                      tilt: [number, number] }
+  | { t: "throw_req"; throw: ThrowInput }                                // shooter → host
+  | { t: "roll";      rollId: string; shooter: string;                   // host → all
+                      initial: [BodyInit, BodyInit]; faces: [number, number] }
   | { t: "ping" } | { t: "pong" };
 
-type Player   = { id: string; name: string; avatarUrl?: string; color: string; joinedAt: number };
-type DieSpec  = { kind: "d4"|"d6"|"d8"|"d10"|"d12"|"d20"|"d100"; color?: string };
-type BodyInit = { pos: [number,number,number]; quat: [number,number,number,number];
-                  vel: [number,number,number]; angVel: [number,number,number] };
-type RollResult = { rollId: string; roller: string; dice: DieSpec[]; faces: number[]; total: number; at: number };
+type Player    = { id: string; name: string; avatarUrl?: string; color: string; joinedAt: number };
+type ThrowInput = { dir: [number, number]; speed: number; spin: number; shakeEnergy: number; source: "motion" | "flick" | "button" };
+type BodyInit  = { pos: [number,number,number]; quat: [number,number,number,number];
+                   vel: [number,number,number]; angVel: [number,number,number] };
 ```
+
+`GameState` is defined in §6.
 
 ### 4.3 Host migration
 - Every `state` message includes the ordered player list.
-- On host disconnect, each peer computes the next host (lowest `joinedAt`). That peer claims `dice-<roomId>-host`; others retry connecting to it with backoff (250 ms → 4 s).
-- In-flight roll is discarded; last confirmed `history` is kept.
+- On host disconnect, each peer computes the next host (lowest `joinedAt`); that peer claims `dice-<roomId>-host`, others reconnect with backoff (250 ms → 4 s).
+- The in-flight roll is discarded; last confirmed `GameState` is kept and the shooter rerolls.
 
-### 4.4 Fallback transport (risk mitigation)
-WebRTC may be blocked or unreliable inside Discord's sandboxed iframe/proxy, or behind strict NATs. The network layer is written against a small interface so a second transport can be swapped in:
+### 4.4 Fallback transport
+WebRTC may be blocked inside Discord's iframe/proxy or behind strict NATs. Networking is written against an interface:
 
 ```ts
 interface Transport {
@@ -127,158 +129,233 @@ interface Transport {
 ```
 
 - `PeerJsTransport` — default (WebRTC data channels).
-- `RelayTransport` — WebSocket to a **Cloudflare Durable Object** per room (`/api/relay/<roomId>`). Same message protocol; the DO just broadcasts. Used automatically if WebRTC fails within ~5 s, or forced via `?transport=relay`.
-- TURN: configure Cloudflare Calls TURN (or similar) credentials via the Worker for NAT traversal.
+- `RelayTransport` — WebSocket to a **Cloudflare Durable Object** per room (`/api/relay/<roomId>`), same protocol, simple broadcast. Used automatically if WebRTC doesn't connect within ~5 s, or forced with `?transport=relay`.
+- TURN credentials (e.g. Cloudflare Calls TURN) issued short-lived by the Worker.
 
 ---
 
-## 5. Dice Simulation & Sync
+## 5. Device Motion: Shake & Throw
 
-### 5.1 Determinism strategy
-Physics engines are not bit-for-bit deterministic across devices, so we **don't rely on every client simulating identically**. Instead:
+### 5.1 Interaction model
+1. **It's your turn** → the two dice appear "in your hand" (a cup view at the bottom of your screen).
+2. **Press and hold** the screen (or the big *SHAKE* area) and **shake the phone** → dice rattle in the cup, with sound and haptics. Everyone else sees the shooter's dice rattling in a small "hand" indicator at the table edge, driven by `shake` messages.
+3. **Throw** — either:
+   - **Flick throw:** a sharp forward flick of the phone (acceleration spike then deceleration) while holding, or
+   - **Release throw:** lift your finger after shaking; the throw uses the motion of the last ~150 ms.
+4. Dice fly onto the shared table with a velocity/spin derived from the gesture.
 
-1. Host generates `seed` and initial body states (`BodyInit[]`) for each die.
-2. Host runs the simulation **headlessly to rest** (fast-forward, fixed 1/120 s step, max ~6 s), reads the top faces → `faces[]`.
-3. Host broadcasts `roll` (initial states) and `result` (faces) together.
-4. Every client (including host) plays the simulation visually from the same initial states. When dice settle, if a client's landed face differs from the authoritative face, it **re-orients the die mesh** (rotate around the die's local axes so the correct face is up) — applied *before* the animation starts by pre-rotating the die's visual mesh relative to its physics body, so the correction is invisible.
+Holding the screen while shaking prevents accidental throws and gives iOS/Android a clean user gesture for audio and permissions.
 
-> Technique: simulate once to find which face lands up, compute the rotation mapping that face → desired face, apply it to the mesh's local offset, then replay. This is the standard "predetermined result" trick used by most 3D dice rollers.
+### 5.2 Permissions & platform handling
+- **iOS Safari / iOS WebViews:** `DeviceMotionEvent.requestPermission()` must be called from a user gesture. Show a one-time "Enable shake to roll" button on first turn; remember the choice for the session.
+- **Android Chrome:** `devicemotion` events are available without a prompt on HTTPS.
+- **Inside Discord:** the Activity iframe must be permitted accelerometer/gyroscope access by Discord's iframe `allow` policy. **This is unverified and is the #1 spike in M1** (§10). If motion events never arrive within 1 s of a gesture, fall back automatically to touch flick.
+- Feature detect: `'DeviceMotionEvent' in window` and that events actually fire with non-null `accelerationIncludingGravity`.
 
-### 5.2 Physics
-- **cannon-es**: dice as `ConvexPolyhedron` bodies, a ground plane, and four invisible walls forming a tray.
-- Fixed timestep 1/60 for display, sleeping enabled, settle detection when all bodies sleep or after timeout.
-- Face detection: for each die, find the face normal (in world space) with the greatest dot product against `+Y` (for d4, the vertex pointing up / face pointing down).
+### 5.3 Signal processing
+- Listen to `devicemotion`; use `acceleration` (gravity removed) when available, else high-pass filter `accelerationIncludingGravity` (α ≈ 0.8).
+- **Shake energy:** exponential moving average of `|a|` above a noise floor (~1.5 m/s²). Drives rattle animation, sound volume, and `shake.intensity` (0–1).
+- **Throw detection:** peak `|a|` > ~15 m/s² followed by a drop below ~5 m/s² within 120 ms, while holding.
+- **Throw vector:** integrate acceleration over the ~150 ms window before release/peak → device-frame velocity. Map device axes to the table: phone's −Z (away from the user, "forward") → table forward, device X → table sideways. Use `screen.orientation.angle` to correct for landscape.
+- **Spin:** from `rotationRate` magnitude (gyroscope) during the throw window, or derived from shake energy if unavailable.
+- **Clamping & normalization:** `speed` clamped to a playable range so dice always reach the table and never leave it; minimum throw strength enforced so a lazy drop still tumbles. Weak gestures (< threshold) are ignored and the dice stay in hand.
 
-### 5.3 Rendering
-- **Three.js** `WebGLRenderer`, perspective camera looking down at the tray at ~60°.
-- Dice geometries generated procedurally (polyhedron + per-face UV for number textures drawn on a canvas atlas).
-- Lighting: hemisphere + one directional light with soft shadows (disabled on low-end / mobile).
-- Each player has a color; dice they roll are tinted with it.
-- Resize-aware; `devicePixelRatio` capped at 2.
+### 5.4 Fallbacks (desktop & no-motion devices)
+- **Touch/mouse flick:** press on the dice in the cup, drag, release — direction and speed from the last ~100 ms of pointer movement. Wiggling the pointer while held = shake.
+- **Roll button:** always available for accessibility; produces a randomized `ThrowInput` with `source: "button"`.
 
----
+### 5.5 Feedback
+- **Haptics:** `navigator.vibrate()` pulses scaled by shake energy (Android; no-op on iOS).
+- **Audio:** dice-in-cup rattle loop while shaking, impact sounds keyed off physics collision velocity on the table (Web Audio, unlocked on first gesture).
 
-## 6. Game Features
-
-### 6.1 Free Roll (v1 default)
-- Dice tray picker: tap d4…d100 to add to your hand (max 10 dice), clear, roll.
-- Shared result log: "**Alice** rolled 2d6 + 1d20 → 3, 5, 17 = **25**".
-- Optional notation input: `2d6+1d20+3`.
-
-### 6.2 "High Roller" mini-game (v1 stretch)
-- Host starts a round; each player rolls once with the same dice set.
-- Highest total wins the round; ties trigger a roll-off.
-- Running scoreboard for the session.
-
-### 6.3 Later ideas
-- Yahtzee-style hold/reroll, Liar's Dice (private dice per player), custom dice skins, sound effects, haptics.
+### 5.6 Fairness
+The gesture only shapes the **throw** (direction, speed, spin). The host adds seeded random jitter to initial position, orientation, and angular velocity, so the outcome can't be controlled by a practiced flick. The host computes the result (§7.1).
 
 ---
 
-## 7. UI / UX
+## 6. Game: "7 or 11"
+
+Classic craps pass-line rules with two dice, no betting.
+
+### 6.1 Rules
+- Players take turns as the **shooter** in join order.
+- **Come-out roll:**
+  - **7 or 11 → Natural, shooter wins** the round (+1 point). Shooter rolls a new come-out.
+  - **2, 3, or 12 → Craps, shooter loses** the round. Dice pass to the next player.
+  - **4, 5, 6, 8, 9, 10 → that number becomes the Point.**
+- **Point phase:** shooter keeps rolling until:
+  - they roll the **Point again → win** (+1 point), shooter rolls a new come-out, or
+  - they roll a **7 → "Seven out", lose**; dice pass to the next player.
+- **Match end:** first to **5 points** wins (host-configurable: 3 / 5 / 10, or unlimited "casual" mode).
+- Players joining mid-match are appended to the turn order with 0 points.
+- If the shooter disconnects, the dice pass to the next player.
+
+### 6.2 State
+
+```ts
+type GameState = {
+  phase: "lobby" | "comeout" | "point" | "rolling" | "matchOver";
+  shooterId: string | null;
+  turnOrder: string[];            // player ids
+  point: number | null;           // 4,5,6,8,9,10 during point phase
+  scores: Record<string, number>;
+  target: number | null;          // points to win; null = casual
+  lastRoll: { rollId: string; shooter: string; faces: [number, number]; total: number;
+              outcome: "natural" | "craps" | "point_set" | "point_hit" | "seven_out" | "no_decision" } | null;
+  history: GameState["lastRoll"][]; // last 20 rolls
+};
+```
+
+The host runs a pure reducer `applyRoll(state, faces) → state` — trivially unit-testable.
+
+### 6.3 Announcements
+Big on-screen callouts after each roll: **"YO-LEVEN!"**, **"SEVEN — WINNER!"**, **"CRAPS!"**, **"POINT IS 6"**, **"SEVEN OUT"**, **"HIT THE POINT!"**.
+
+---
+
+## 7. Dice Simulation & Sync
+
+### 7.1 Predetermined-result strategy
+Physics engines aren't bit-for-bit deterministic across devices, so clients don't rely on identical simulation:
+
+1. Shooter sends `throw_req` with their `ThrowInput`.
+2. Host validates/clamps it, adds seeded jitter, and builds `BodyInit` for both dice.
+3. Host picks the result faces with a CSPRNG (`crypto.getRandomValues`) — fair 1/6 per die independent of physics.
+4. Host broadcasts `roll` with initial states + faces.
+5. Each client simulates from the initial states **headlessly to rest** (fast-forward), sees which face lands up, and pre-rotates each die's *visual mesh* relative to its physics body so the authoritative face ends up on top. Then it plays the real-time animation. The correction is invisible because it's applied before the first frame.
+
+Shooter's client shows dice leaving their "hand" immediately on throw (local prediction) and seamlessly hands over to the authoritative `roll` (~1 RTT later) — throw arc in the first ~100 ms is the same since it's derived from the same `ThrowInput`.
+
+### 7.2 Physics
+- **cannon-es**: dice as `Box` bodies with slightly rounded visual meshes, ground plane, and walls forming a craps-style table with a back wall dice bounce off.
+- Fixed step 1/120 s; sleeping enabled; settled when both bodies sleep or after 6 s timeout (if cocked against a wall, nudge and re-settle).
+- Face detection: local face normal with the greatest dot product against world `+Y`.
+
+### 7.3 Rendering
+- **Three.js** `WebGLRenderer`, perspective camera looking down the table at ~55°.
+- Dice: rounded-cube geometry with pip textures (canvas-generated), tinted with the shooter's color.
+- Green felt table, hemisphere + directional light, soft shadows (disabled on low-end mobile), `devicePixelRatio` capped at 2.
+- Cup/hand view: overlay mini-scene at the bottom of the shooter's screen while shaking.
+
+---
+
+## 8. UI / UX
 
 ```
 ┌─────────────────────────────────────────────┐
-│  Room: ABC123   👤 Alice  👤 Bob  👤 Cara    │  ← participants bar
+│ 🎲 Room ABC123     Alice 3 · Bob 1 · Cara 0  │  ← players + scores, shooter highlighted
 ├─────────────────────────────────────────────┤
+│        POINT: 6        (Bob is shooting)    │  ← phase banner
 │                                             │
-│              [ 3D dice tray ]               │
+│              [ 3D craps table ]             │
 │                                             │
 ├─────────────────────────────────────────────┤
-│ d4 d6 d8 d10 d12 d20 d100 │ hand: 2d6 │ ROLL │  ← dice picker
+│   ╭─────────────────────────────────╮       │
+│   │  HOLD & SHAKE  — flick to throw │       │  ← shooter only: cup / shake zone
+│   ╰─────────────────────────────────╯       │
 ├─────────────────────────────────────────────┤
-│ Alice rolled 2d6 → 3 + 5 = 8                │  ← roll log
+│ Bob: 4 + 2 = 6 → Point is 6                 │  ← roll log
 └─────────────────────────────────────────────┘
 ```
 
-- Plain DOM overlay over the canvas (no UI framework needed for v1).
-- Large touch targets; works in Discord's portrait mobile layout.
-- Standalone mode: "Copy invite link" button.
+- DOM overlay over the canvas, no UI framework for v1.
+- Portrait-first for Discord mobile; landscape supported.
+- Lobby screen: player list, target score picker (host), **Start** button, standalone "Copy invite link".
+- Lock screen orientation is not possible in iframes — handle orientation via `screen.orientation.angle` (§5.3).
 
 ---
 
-## 8. Project Structure
+## 9. Project Structure
 
 ```
 discord-activity-dice/
-├── PLAN.md                 ← this document
+├── PLAN.md
 ├── README.md
 ├── package.json            ← Vite + TypeScript
 ├── vite.config.ts
 ├── index.html
 ├── src/
-│   ├── main.ts             ← boot: detect mode, init identity, transport, scene
+│   ├── main.ts             ← boot: detect mode, identity, transport, scene
 │   ├── discord.ts          ← Embedded App SDK auth + participants
-│   ├── identity.ts         ← Player creation (Discord or guest)
+│   ├── identity.ts         ← Player (Discord or guest)
 │   ├── net/
 │   │   ├── protocol.ts     ← Msg types
 │   │   ├── transport.ts    ← Transport interface
 │   │   ├── peerjs.ts       ← PeerJsTransport
 │   │   ├── relay.ts        ← RelayTransport (WebSocket)
 │   │   └── room.ts         ← host election, migration, state sync
+│   ├── input/
+│   │   ├── motion.ts       ← DeviceMotion permission, filtering, shake energy, throw detection
+│   │   ├── flick.ts        ← pointer flick fallback
+│   │   └── throw.ts        ← ThrowInput normalization/clamping
 │   ├── dice/
-│   │   ├── geometry.ts     ← polyhedra + face numbering
-│   │   ├── textures.ts     ← canvas number atlases
-│   │   ├── physics.ts      ← cannon-es world, tray, simulate-to-rest
-│   │   └── roller.ts       ← predetermined-result roll orchestration
-│   ├── scene.ts            ← Three.js renderer, camera, lights
-│   ├── ui.ts               ← DOM overlay, picker, log
-│   └── game/highroller.ts  ← mini-game logic
+│   │   ├── mesh.ts         ← rounded d6 geometry + pip textures
+│   │   ├── physics.ts      ← cannon-es world, table, simulate-to-rest
+│   │   └── roller.ts       ← predetermined-result orchestration
+│   ├── game/
+│   │   └── sevenEleven.ts  ← pure GameState reducer
+│   ├── audio.ts            ← rattle + impact sounds, haptics
+│   ├── scene.ts            ← renderer, camera, lights, table, cup view
+│   └── ui.ts               ← DOM overlay, lobby, banners, log
 └── worker/
-    ├── wrangler.toml
+    ├── wrangler.toml       ← route dice.jimandi.love/api/*
     └── src/index.ts        ← /api/token, /api/relay (Durable Object)
 ```
 
 ---
 
-## 9. Configuration & Secrets
+## 10. Configuration & Secrets
 
 | Name | Where | Purpose |
 |---|---|---|
 | `VITE_DISCORD_CLIENT_ID` | Pages build env | Public client ID for SDK |
 | `DISCORD_CLIENT_ID` | Worker var | OAuth token exchange |
 | `DISCORD_CLIENT_SECRET` | Worker **secret** | OAuth token exchange — never shipped to client |
-| `VITE_PEERJS_HOST` / `PORT` / `PATH` | Pages build env | Signaling server (defaults to PeerJS cloud) |
-| `TURN_*` | Worker secret | Issue short-lived TURN credentials |
+| `VITE_PEERJS_HOST` / `PORT` / `PATH` | Pages build env | Signaling server |
+| `TURN_*` | Worker secret | Short-lived TURN credentials |
 
-`.env*` files are git-ignored.
+`.env*` and `.dev.vars` are git-ignored.
 
 ---
 
-## 10. Milestones
+## 11. Milestones
 
 | # | Milestone | Deliverable |
 |---|---|---|
-| **M0** | Scaffold | Vite + TS project, Cloudflare Pages deploy, README |
-| **M1** | Single-player dice | Three.js scene + cannon-es tray, all dice types, face detection, roll log |
-| **M2** | Predetermined results | Headless simulate-to-rest + mesh re-orientation, deterministic replay from `BodyInit[]` |
-| **M3** | Standalone multiplayer | PeerJS transport, room codes, host election, shared rolls, invite link |
-| **M4** | Discord Activity | Developer Portal app, Worker `/api/token`, SDK auth, URL mappings, `instanceId` rooms |
-| **M5** | Resilience | Host migration, Durable Object relay fallback, TURN |
-| **M6** | Game mode + polish | High Roller mode, sounds, mobile tuning, custom colors |
+| **M0** | Scaffold & deploy | Vite + TS project, Cloudflare Pages on `dice.jimandi.love`, Worker route stub |
+| **M1** | Motion spike ⚠️ | Minimal page that logs DeviceMotion on iOS Safari, Android Chrome, **and inside a Discord Activity on iOS + Android**. Decides whether motion is primary in Discord or flick-only |
+| **M2** | Single-player dice | Table + 2d6 physics, face detection, roll button + pointer flick |
+| **M3** | Shake & throw | `motion.ts` shake energy, throw detection, cup view, audio + haptics, tuning pass on real phones |
+| **M4** | Predetermined results | Host-picked faces + mesh re-orientation, replay from `BodyInit` |
+| **M5** | Standalone multiplayer | PeerJS transport, rooms, host election, `shake` broadcast, shared rolls, invite link |
+| **M6** | 7 or 11 game | Reducer, turn order, lobby, scoring, callouts |
+| **M7** | Discord Activity | Developer Portal app, `/api/token`, SDK auth, URL mappings, `instanceId` rooms |
+| **M8** | Resilience & polish | Host migration, Durable Object relay fallback, TURN, mobile perf tuning |
 
 ---
 
-## 11. Testing
+## 12. Testing
 
-- **Unit (Vitest):** dice notation parser, face detection per die type, re-orientation math (for every die, every face → every target face), protocol encode/decode, host election ordering.
-- **Integration:** two+ browser tabs locally (standalone mode) — verify identical final faces and log entries.
-- **Discord:** test via Developer Portal Activity testing in a private server, desktop + mobile client.
-- **Network:** forced `?transport=relay`, simulated host disconnect.
+- **Unit (Vitest):** `sevenEleven` reducer (every total in come-out and point phases, turn passing, match end), face detection, mesh re-orientation math (every face → every target face), throw normalization/clamping, shake/throw detector against recorded motion traces, host election ordering.
+- **Motion fixtures:** record real `devicemotion` traces (shakes, flicks, lazy drops, walking around) from iOS and Android as JSON, replay them in tests to tune thresholds without a phone in hand.
+- **Integration:** multiple local tabs in standalone mode — identical faces, scores, turn order.
+- **Device:** iPhone (Safari + Discord app), Android (Chrome + Discord app), desktop Discord.
+- **Network:** `?transport=relay`, simulated host disconnect mid-point.
 
 ---
 
-## 12. Risks & Open Questions
+## 13. Risks & Open Questions
 
 | Risk | Mitigation |
 |---|---|
-| WebRTC blocked/limited inside Discord iframe proxy | `Transport` abstraction + Durable Object WebSocket relay fallback (§4.4) |
-| Public PeerJS cloud unreliable or not mappable via Discord proxy | Self-host PeerJS server or Worker-based signaling |
-| Physics divergence across devices | Host-authoritative results + mesh re-orientation (§5.1) |
-| Mobile GPU performance | Shadow toggle, DPR cap, low-poly dice |
-| Host leaves mid-roll | Discard in-flight roll, migrate host (§4.3) |
+| **DeviceMotion blocked inside Discord's Activity iframe** (permissions policy / WebView) | M1 spike first; automatic fallback to pointer flick; motion still works in standalone mode |
+| iOS motion permission friction | Single clear "Enable shake to roll" prompt on first turn; flick fallback if denied |
+| Accidental throws while shaking or walking | Hold-to-shake requirement + peak/decel throw detector + minimum strength |
+| WebRTC blocked/limited in Discord | `Transport` abstraction + Durable Object relay fallback |
+| Public PeerJS cloud unreliable / not mappable | Self-host PeerJS or Worker-based signaling |
+| Physics divergence across devices | Host-authoritative faces + mesh re-orientation |
+| Mobile GPU performance | Shadow toggle, DPR cap, simple geometry |
 
 **Open questions**
-1. Custom domain for Cloudflare Pages, or `*.pages.dev`?
-2. Is the "High Roller" mini-game the desired game, or a different dice game (Yahtzee, Liar's Dice, Farkle)?
-3. Should rolls be visible to everyone always, or support private/GM rolls?
+1. Default match target: 5 points?
+2. Should a natural (7/11) on the come-out keep the dice with the shooter (classic craps, as specified) or pass them after every round?
