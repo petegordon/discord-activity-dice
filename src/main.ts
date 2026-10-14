@@ -97,6 +97,8 @@ async function boot() {
     self = { ...(await newIdentity()), name };
   }
   ui.setRoom(roomId, !inDiscord);
+  // Discord lists the Terms and Privacy links on the app's own page; plain links can't leave the Activity frame.
+  document.getElementById("legal-links")!.hidden = inDiscord;
 
   ui.status({ kind: "connecting" });
   const transport: Transport =

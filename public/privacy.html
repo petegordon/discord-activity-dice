@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy · 7, 11, Doubles</title>
+    <meta name="description" content="Privacy Policy for 7, 11, Doubles by Users First LLC and HouseTandem." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/legal.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Privacy Policy</h1>
+        <p class="meta">7, 11, Doubles · Effective October 14, 2026</p>
+      </header>
+
+      <p>
+        7, 11, Doubles (the "Game") is a dice game you can play as a Discord Activity or on the web at
+        <a href="https://dice.housetandem.com">dice.housetandem.com</a>. It is provided by Users First LLC together with HouseTandem
+        ("we," "us," "our"). This policy explains what information the Game uses, why, and who can see it.
+      </p>
+      <p>
+        <strong>The short version:</strong> we collect only what the Game needs to run a table. We don't run ads or analytics, we
+        don't set tracking cookies, we don't sell or rent your information, and we don't keep a database of players.
+      </p>
+
+      <h2>1. Information we use</h2>
+      <table>
+        <thead>
+          <tr><th>Information</th><th>Where it comes from</th><th>What it's used for</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Discord username, display name and avatar</td>
+            <td>Discord, when you launch the Activity and approve the <code>identify</code> permission</td>
+            <td>Showing who is at the table. We don't request your email, friends, servers or messages.</td>
+          </tr>
+          <tr>
+            <td>Name you type (web version)</td>
+            <td>You</td>
+            <td>Showing who is at the table. It's saved in your browser so you don't have to retype it.</td>
+          </tr>
+          <tr>
+            <td>Discord authorization code and access token</td>
+            <td>Discord</td>
+            <td>Our server exchanges the code for a token once, at sign-in, and hands the token back to your device. We don't store it.</td>
+          </tr>
+          <tr>
+            <td>Session ID and key</td>
+            <td>Generated randomly on your device each time you open the Game</td>
+            <td>Telling players apart, and stopping anyone from joining as you. They aren't tied to your Discord account.</td>
+          </tr>
+          <tr>
+            <td>Game activity: your throws, dice results, scores, turn order and "shake" level</td>
+            <td>Your play</td>
+            <td>Running the game and showing everyone at the table the same rolls and scores.</td>
+          </tr>
+          <tr>
+            <td>Device motion (accelerometer and gyroscope)</td>
+            <td>Your phone, only if you allow it</td>
+            <td>
+              Detecting shakes and throws. Raw sensor readings are processed on your device and never leave it. Only the
+              resulting throw (a direction, speed and spin) and a 0–1 shake level are sent to the table.
+            </td>
+          </tr>
+          <tr>
+            <td>IP address and basic request data (browser type, time)</td>
+            <td>Your device's network connection</td>
+            <td>Delivering the Game, connecting players, and protecting the service from abuse. See section 3.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>2. Who can see it</h2>
+      <ul>
+        <li>
+          <strong>Other players at your table</strong> see your display name, avatar, player color, throws, dice results and
+          scores.
+        </li>
+        <li>
+          <strong>Peer-to-peer play:</strong> the web version connects players directly using WebRTC by default. In that mode,
+          the other players' devices can see your IP address, as with any peer-to-peer connection. Discord Activities use our relay
+          server by default, so players don't see each other's IP addresses.
+        </li>
+        <li>We don't share your information with advertisers or data brokers, and we never sell it.</li>
+      </ul>
+
+      <h2>3. Service providers</h2>
+      <p>These services process limited information so the Game can work:</p>
+      <ul>
+        <li>
+          <strong>Discord</strong>: provides sign-in, your profile name and avatar, and avatar images inside the Activity.
+          Discord's own <a href="https://discord.com/privacy" rel="noopener">Privacy Policy</a> applies to your use of Discord.
+        </li>
+        <li>
+          <strong>Cloudflare</strong>: hosts the Game and runs our server and relay. Cloudflare processes request data such as IP
+          addresses to deliver and secure the service. See
+          <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener">Cloudflare's Privacy Policy</a>.
+        </li>
+        <li>
+          <strong>PeerJS</strong> (peer-to-peer mode only): a public connection server (0.peerjs.com) helps players' devices
+          find each other. It sees your IP address and your random session ID.
+        </li>
+        <li>
+          <strong>STUN servers</strong> operated by Cloudflare and Google (peer-to-peer mode only): help devices discover how to
+          reach each other. They see your IP address.
+        </li>
+      </ul>
+
+      <h2>4. How long we keep it</h2>
+      <ul>
+        <li>
+          Table state (players, scores, recent rolls) is held in memory only while a table is active. Our relay doesn't write it to
+          a database, and it's gone once everyone leaves.
+        </li>
+        <li>
+          Your browser stores your typed name and your sound on/off setting (in <code>localStorage</code>) until you clear your
+          browser data. These stay on your device.
+        </li>
+        <li>Our hosting provider may keep standard request and security logs for a limited time under its own policies.</li>
+      </ul>
+
+      <h2>5. Cookies and tracking</h2>
+      <p>
+        The Game doesn't use advertising or analytics cookies or tracking pixels. It uses your browser's local storage only for the
+        two preferences described above.
+      </p>
+
+      <h2>6. Your choices and rights</h2>
+      <ul>
+        <li>You can play the web version without a Discord account, under any name you choose.</li>
+        <li>You can decline motion access. The Game then lets you throw by dragging or tapping instead.</li>
+        <li>You can clear your saved name and settings at any time by clearing your browser's site data.</li>
+        <li>You can revoke the Game's Discord access in Discord under <em>User Settings → Authorized Apps</em>.</li>
+        <li>
+          Depending on where you live, you may have rights to access, correct or delete personal information, or to object to its
+          processing. We don't keep player records, but if you have a request or question, email us at
+          <a href="mailto:games@usersfirst.com">games@usersfirst.com</a> and we'll respond within a reasonable time.
+        </li>
+      </ul>
+
+      <h2>7. Children</h2>
+      <p>
+        The Game isn't directed to children under 13, and you must meet Discord's minimum age (or the minimum age in your country, if
+        higher) to use it as a Discord Activity. We don't knowingly collect personal information from children under 13. If you
+        believe a child has given us personal information, contact us and we'll address it.
+      </p>
+
+      <h2>8. Security</h2>
+      <p>
+        Connections to the Game use HTTPS or encrypted WebRTC. Session keys stop other players from joining as you. No method of
+        transmission or storage is completely secure, but we keep what we handle to a minimum.
+      </p>
+
+      <h2>9. International users</h2>
+      <p>
+        The Game is operated from the United States, and our service providers may process information in other countries. By using
+        the Game, you understand that your information may be processed outside your country of residence.
+      </p>
+
+      <h2>10. Changes to this policy</h2>
+      <p>
+        If we change this policy, we'll post the new version here and update the effective date. If the changes are significant,
+        we'll take reasonable steps to let players know, such as a notice in the Game.
+      </p>
+
+      <h2>11. Contact</h2>
+      <p>
+        Users First LLC<br />
+        Email: <a href="mailto:games@usersfirst.com">games@usersfirst.com</a>
+      </p>
+
+      <nav>
+        <a href="/">Play 7, 11, Doubles</a>
+        <a href="/terms">Terms of Service</a>
+      </nav>
+    </main>
+  </body>
+</html>

@@ -520,6 +520,17 @@ input:focus-visible {
   text-align: center;
 }
 
+.legal {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legal a {
+  color: var(--muted);
+}
+
 .trophy {
   font-size: 56px;
   text-align: center;

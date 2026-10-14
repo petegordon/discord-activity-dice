@@ -88,7 +88,10 @@ npx wrangler secret put TURN_KEY_API_TOKEN
    - `wrangler.jsonc` → `vars.DISCORD_CLIENT_ID`
    - a `.env` file containing `VITE_DISCORD_CLIENT_ID=<id>` (read at build time)
 6. Set the secret with `npx wrangler secret put DISCORD_CLIENT_SECRET`, then run `npm run deploy`.
-7. Launch the Activity from a voice channel. Everyone in the same Activity instance joins the same table automatically.
+7. In the developer portal's **General Information**, set:
+   - **Terms of Service URL:** https://dice.housetandem.com/terms
+   - **Privacy Policy URL:** https://dice.housetandem.com/privacy
+8. Launch the Activity from a voice channel. Everyone in the same Activity instance joins the same table automatically.
 
 ## Project layout
 
