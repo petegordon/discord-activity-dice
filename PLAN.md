@@ -1,6 +1,6 @@
 # Discord Activity Dice — Plan & Specification
 
-A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It runs **as a Discord Activity** and **as a standalone web app** at **https://dice.jimandi.love**. On mobile, players **physically shake and throw** the dice using device motion; every player sees the same dice tumble and land on the same faces in real time.
+A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It runs **as a Discord Activity** and **as a standalone web app** at **https://dice.housetandem.com**. On mobile, players **physically shake and throw** the dice using device motion; every player sees the same dice tumble and land on the same faces in real time.
 
 **Stack:** Three.js (rendering) · cannon-es (physics) · DeviceMotion API (shake & throw) · PeerJS / WebRTC (peer-to-peer sync) · Cloudflare Workers with static assets + a Durable Object (hosting, Discord OAuth token exchange, WebSocket relay) · Vite + TypeScript (build)
 
@@ -13,7 +13,7 @@ A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It ru
 - A turn-based **"7, 11, Doubles"** points race (§6).
 - **Shake-and-throw with device motion** on phones; mouse/touch flick fallback everywhere else (§5).
 - Every participant sees **the same animation and the same result**.
-- Run inside a Discord voice channel as an Activity, *and* at `dice.jimandi.love` with a shareable room link.
+- Run inside a Discord voice channel as an Activity, *and* at `dice.housetandem.com` with a shareable room link.
 - Zero or near-zero server cost: static hosting + peer-to-peer data.
 
 ### Non-Goals (v1)
@@ -29,7 +29,7 @@ A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It ru
 ```
                     ┌────────────────────────────────────┐
                     │  Cloudflare Worker (static assets) │
-                    │  https://dice.jimandi.love         │
+                    │  https://dice.housetandem.com      │
                     └───────────────┬────────────────────┘
                                     │
           ┌─────────────────────────┼──────────────────────────┐
@@ -42,7 +42,7 @@ A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It ru
           │
  ┌────────▼──────────────────────────┐   ┌────────────────────────────────────┐
  │ PeerJS signaling server           │   │ Cloudflare Worker                  │
- │ + STUN / TURN                     │   │ route: dice.jimandi.love/api/*     │
+ │ + STUN / TURN                     │   │ route: dice.housetandem.com/api/*  │
  └───────────────────────────────────┘   │  - POST /api/token  (Discord OAuth)│
                                          │  - /api/relay/:room (Durable Object│
                                          │    WebSocket fallback, §4.4)       │
@@ -63,19 +63,19 @@ Note: *host* (network authority) and *shooter* (current player's turn) are separ
 | Mode | Entry | Identity | Room ID |
 |---|---|---|---|
 | **Discord Activity** | Launched from a voice channel | Discord user (Embedded App SDK + OAuth) | `discordSdk.instanceId` |
-| **Standalone web** | `https://dice.jimandi.love/?room=<code>` | Guest name typed by player (`localStorage`) | 6-char code in URL; generated if absent |
+| **Standalone web** | `https://dice.housetandem.com/?room=<code>` | Guest name typed by player (`localStorage`) | 6-char code in URL; generated if absent |
 
 Detection: if Discord's `frame_id` / `instance_id` query params are present, initialize the Discord SDK; otherwise run standalone.
 
 ### 3.1 Domain & hosting
-- A single Cloudflare Worker with static assets serves the app, `/api/*` and the relay Durable Object, on the custom domain **`dice.jimandi.love`** (the `jimandi.love` zone is on Cloudflare; `wrangler deploy` creates the DNS record). This replaced the original Pages + separate Worker idea: one deploy, one origin, and Durable Objects need a Worker anyway.
-- Worker bound to the route `dice.jimandi.love/api/*` so the app and API share one origin (no CORS, single Discord URL mapping target).
+- A single Cloudflare Worker with static assets serves the app, `/api/*` and the relay Durable Object, on the custom domain **`dice.housetandem.com`** (the `housetandem.com` zone is on Cloudflare; `wrangler deploy` creates the DNS record). This replaced the original Pages + separate Worker idea: one deploy, one origin, and Durable Objects need a Worker anyway.
+- The app and `/api/*` share one origin (no CORS, single Discord URL mapping target).
 - HTTPS is required for DeviceMotion and WebRTC — provided by Cloudflare.
 
 ### 3.2 Discord Activity specifics
 - `@discord/embedded-app-sdk`: `ready()` → `authorize()` (scope: `identify`) → `POST /api/token` → `authenticate()`.
 - Activities run in an iframe behind Discord's proxy (`<app_id>.discordsays.com`); all outbound requests must use **URL Mappings** in the Developer Portal:
-  - `/` → `dice.jimandi.love`
+  - `/` → `dice.housetandem.com`
   - `/peerjs` → PeerJS signaling host
 - Call `patchUrlMappings()` so PeerJS's absolute URLs are rewritten through the proxy.
 - Display name and avatar come from the authenticated user. Room membership comes from the transport, not the SDK.
@@ -310,7 +310,7 @@ discord-activity-dice/
 │   ├── scene.ts            ← renderer, camera, lights, table, cup view
 │   └── ui.ts               ← DOM overlay, lobby, banners, log
 └── worker/
-    ├── wrangler.toml       ← route dice.jimandi.love/api/*
+    ├── src/index.ts        ← (config in wrangler.jsonc at the repo root)
     └── src/index.ts        ← /api/token, /api/relay (Durable Object)
 ```
 
@@ -334,7 +334,7 @@ discord-activity-dice/
 
 | # | Milestone | Deliverable |
 |---|---|---|
-| **M0** | Scaffold & deploy | Vite + TS project, Worker with static assets on `dice.jimandi.love` |
+| **M0** | Scaffold & deploy | Vite + TS project, Worker with static assets on `dice.housetandem.com` |
 | **M1** | Motion spike ⚠️ | Minimal page that logs DeviceMotion on iOS Safari, Android Chrome, **and inside a Discord Activity on iOS + Android**. Decides whether motion is primary in Discord or flick-only |
 | **M2** | Single-player dice | Table + 2d6 physics, face detection, roll button + pointer flick |
 | **M3** | Shake & throw | `motion.ts` shake energy, throw detection, cup view, audio + haptics, tuning pass on real phones |
@@ -350,7 +350,7 @@ discord-activity-dice/
 
 | # | Status |
 |---|---|
-| M0 | ✅ Deployed as a Worker at https://discord-activity-dice.pete-872.workers.dev. The `dice.jimandi.love` custom domain is configured but not attached: the `jimandi.love` zone isn't on this Cloudflare account yet |
+| M0 | ✅ Live at https://dice.housetandem.com (Worker custom domain), also at https://discord-activity-dice.pete-872.workers.dev |
 | M1 | 🟡 Shake-and-throw confirmed working on two real phones in the standalone site (2026-10-14). Still open: whether Discord lets an Activity read motion sensors |
 | M2–M6 | ✅ Built. Unit-tested, plus a headless multi-player e2e (`scripts/e2e.mjs`) on both transports, locally and in production |
 | M7 | 🟡 Code complete (SDK auth, `/api/token`, `/.proxy` paths, `instanceId` rooms). Needs a Discord application ID and secret |

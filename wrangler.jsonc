@@ -14,7 +14,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }],
   // Also serve on <name>.<subdomain>.workers.dev, which works before the custom domain is set up.
   "workers_dev": true,
-  "routes": [{ "pattern": "dice.jimandi.love", "custom_domain": true }],
+  "routes": [{ "pattern": "dice.housetandem.com", "custom_domain": true }],
   "vars": {
     // Public Discord application ID. The secret is set with: wrangler secret put DISCORD_CLIENT_SECRET
     "DISCORD_CLIENT_ID": ""

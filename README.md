@@ -1,6 +1,6 @@
 # 7, 11, Doubles
 
-A multiplayer two-dice game with 3D dice that you **shake and throw with your phone**. It runs as a **Discord Activity** or standalone at **https://dice.jimandi.love**.
+A multiplayer two-dice game with 3D dice that you **shake and throw with your phone**. It runs as a **Discord Activity** or standalone at **https://dice.housetandem.com**.
 
 - Roll **7** or **11** for **+1**. Roll **doubles** for **+2**. Hit and you roll again; miss and the dice pass on.
 - First to the target (5, 10 or 21) wins.
@@ -55,9 +55,9 @@ Add `&debug` to expose `window.dice` and turn on PeerJS logging.
 
 ## Deploying to Cloudflare
 
-The Worker serves the static build, `/api/*` and the relay. It's live at **https://discord-activity-dice.pete-872.workers.dev**.
+The Worker serves the static build, `/api/*` and the relay. It's live at **https://dice.housetandem.com**, and also at https://discord-activity-dice.pete-872.workers.dev.
 
-`wrangler.jsonc` also binds it to the custom domain `dice.jimandi.love`. That needs the `jimandi.love` zone on the same Cloudflare account. Until the zone is added, `wrangler deploy` uploads everything and then reports `Can't infer zone from route` for the custom domain only.
+`wrangler.jsonc` binds it to the custom domain `dice.housetandem.com`. Wrangler creates the DNS record on deploy, so the `housetandem.com` zone must be on the same Cloudflare account.
 
 ```bash
 npx wrangler login
@@ -80,7 +80,7 @@ npx wrangler secret put TURN_KEY_API_TOKEN
 
    | Prefix | Target |
    |---|---|
-   | `/` | `dice.jimandi.love` |
+   | `/` | `dice.housetandem.com` |
    | `/peerjs` | `0.peerjs.com` (only needed if you force `t=peerjs`) |
 
 4. Under **OAuth2**, add the redirect `https://127.0.0.1` (the Embedded App SDK requires one, but it isn't used).
