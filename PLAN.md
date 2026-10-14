@@ -350,10 +350,10 @@ discord-activity-dice/
 
 | # | Status |
 |---|---|
-| M0 | ✅ Deployed as a Worker at https://discord-activity-dice.pete-872.workers.dev. The  custom domain is configured but not attached: the  zone isn't on this Cloudflare account yet |
+| M0 | ✅ Deployed as a Worker at https://discord-activity-dice.pete-872.workers.dev. The `dice.jimandi.love` custom domain is configured but not attached: the `jimandi.love` zone isn't on this Cloudflare account yet |
 | M1 | ⏳ Needs real phones and a Discord app. Motion detection is unit-tested against synthetic traces; the in-Discord sensor question is still open |
-| M2–M6 | ✅ Built. Unit-tested, plus a headless multi-player e2e () on both transports, locally and in production |
-| M7 | 🟡 Code complete (SDK auth, ,  paths,  rooms). Needs a Discord application ID and secret |
+| M2–M6 | ✅ Built. Unit-tested, plus a headless multi-player e2e (`scripts/e2e.mjs`) on both transports, locally and in production |
+| M7 | 🟡 Code complete (SDK auth, `/api/token`, `/.proxy` paths, `instanceId` rooms). Needs a Discord application ID and secret |
 | M8 | ✅ Host migration, relay transport, stale-host eviction, reconnect grace, optional TURN. 🟡 Mobile performance tuning on real devices |
 
 Known limitation: if a PeerJS host leaves just as it broadcasts a roll, a player who missed that message may take over from slightly older state, and that roll is lost.
