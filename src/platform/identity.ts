@@ -1,10 +1,6 @@
 const NAME_KEY = "dice.name";
 const ROOM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
 
-export function newPlayerId(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-}
-
 export function storedName(): string | null {
   try {
     return localStorage.getItem(NAME_KEY);

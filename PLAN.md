@@ -2,7 +2,7 @@
 
 A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It runs **as a Discord Activity** and **as a standalone web app** at **https://dice.jimandi.love**. On mobile, players **physically shake and throw** the dice using device motion; every player sees the same dice tumble and land on the same faces in real time.
 
-**Stack:** Three.js (rendering) · cannon-es (physics) · DeviceMotion API (shake & throw) · PeerJS / WebRTC (peer-to-peer sync) · Cloudflare Pages + Workers (hosting, Discord OAuth token exchange, optional fallback relay) · Vite + TypeScript (build)
+**Stack:** Three.js (rendering) · cannon-es (physics) · DeviceMotion API (shake & throw) · PeerJS / WebRTC (peer-to-peer sync) · Cloudflare Workers with static assets + a Durable Object (hosting, Discord OAuth token exchange, WebSocket relay) · Vite + TypeScript (build)
 
 ---
 
@@ -28,7 +28,7 @@ A lightweight multiplayer **two-dice "7, 11, Doubles" game** with 3D dice. It ru
 
 ```
                     ┌────────────────────────────────────┐
-                    │  Cloudflare Pages                  │
+                    │  Cloudflare Worker (static assets) │
                     │  https://dice.jimandi.love         │
                     └───────────────┬────────────────────┘
                                     │
@@ -68,17 +68,18 @@ Note: *host* (network authority) and *shooter* (current player's turn) are separ
 Detection: if Discord's `frame_id` / `instance_id` query params are present, initialize the Discord SDK; otherwise run standalone.
 
 ### 3.1 Domain & hosting
-- Cloudflare Pages project with custom domain **`dice.jimandi.love`** (`jimandi.love` zone on Cloudflare, CNAME `dice` → `<project>.pages.dev`).
+- A single Cloudflare Worker with static assets serves the app, `/api/*` and the relay Durable Object, on the custom domain **`dice.jimandi.love`** (the `jimandi.love` zone is on Cloudflare; `wrangler deploy` creates the DNS record). This replaced the original Pages + separate Worker idea: one deploy, one origin, and Durable Objects need a Worker anyway.
 - Worker bound to the route `dice.jimandi.love/api/*` so the app and API share one origin (no CORS, single Discord URL mapping target).
 - HTTPS is required for DeviceMotion and WebRTC — provided by Cloudflare.
 
 ### 3.2 Discord Activity specifics
-- `@discord/embedded-app-sdk`: `ready()` → `authorize()` (scopes: `identify`, `guilds`) → `POST /api/token` → `authenticate()`.
+- `@discord/embedded-app-sdk`: `ready()` → `authorize()` (scope: `identify`) → `POST /api/token` → `authenticate()`.
 - Activities run in an iframe behind Discord's proxy (`<app_id>.discordsays.com`); all outbound requests must use **URL Mappings** in the Developer Portal:
   - `/` → `dice.jimandi.love`
   - `/peerjs` → PeerJS signaling host
 - Call `patchUrlMappings()` so PeerJS's absolute URLs are rewritten through the proxy.
-- Display names/avatars from the authenticated user + `getInstanceConnectedParticipants()`.
+- Display name and avatar come from the authenticated user. Room membership comes from the transport, not the SDK.
+- **Inside Discord the relay transport is the default**, because WebRTC through the Activity sandbox isn't guaranteed. API calls use `/.proxy/api/...`.
 
 ---
 
@@ -112,7 +113,9 @@ type BodyInit  = { pos: [number,number,number]; quat: [number,number,number,numb
 
 ### 4.3 Host migration
 - Every `state` message includes the ordered player list.
-- On host disconnect, each peer computes the next host (lowest `joinedAt`); that peer claims `dice-<roomId>-host`, others reconnect with backoff (250 ms → 4 s).
+- On host disconnect, each peer waits `rank × 1.5 s` (rank by `joinedAt`, measured from when *it* noticed the loss), then tries to claim `dice-<roomId>-host`; the signaling server guarantees only one succeeds and the rest reconnect to it. The earliest joiner is preferred, not guaranteed. The relay needs none of this: the Durable Object's oldest connection is host.
+- A 3 s heartbeat with a 10 s timeout detects vanished peers faster than WebRTC does.
+- The new host keeps the last agreed state, drops the old host, and gives everyone 8 s to reconnect before pruning them.
 - The in-flight roll is discarded; last confirmed `GameState` is kept and the shooter rerolls.
 
 ### 4.4 Fallback transport
@@ -129,7 +132,7 @@ interface Transport {
 ```
 
 - `PeerJsTransport` — default (WebRTC data channels).
-- `RelayTransport` — WebSocket to a **Cloudflare Durable Object** per room (`/api/relay/<roomId>`), same protocol, simple broadcast. Used automatically if WebRTC doesn't connect within ~5 s, or forced with `?transport=relay`.
+- `RelayTransport` — WebSocket to a **Cloudflare Durable Object** per room (`/api/relay/<roomId>`), same protocol, simple broadcast. Chosen per room with `?t=relay` (default inside Discord). A room can't mix transports, so rather than falling back silently, a failed WebRTC join shows a link to the relay version of the room.
 - TURN credentials (e.g. Cloudflare Calls TURN) issued short-lived by the Worker.
 
 ---
@@ -186,7 +189,8 @@ A points race with two dice.
 - **Match end:** the first player to reach the target wins immediately, even mid-streak. The default target is **10 points**; the host can pick 5, 10 or 21 in the lobby.
 - **Odds:** 7 is 6/36, 11 is 2/36 and doubles are 6/36, so a roll hits 14/36 ≈ **39%** of the time and is worth 20/36 ≈ 0.56 points on average. An average turn scores about 0.9 points, so each player needs roughly 11 turns to reach 10.
 - Players joining mid-match go to the end of the turn order with 0 points.
-- If the shooter disconnects, the dice pass to the next player. If only one player is left, the match pauses in the lobby.
+- If the shooter disconnects, the dice pass to the next player. Solo play is allowed (practice), so a match continues with one player.
+- If the winner leaves the match-over screen, the table returns to the lobby.
 - After a match, the host can start a **rematch**: scores reset and the first shooter rotates.
 
 ### 6.2 State
@@ -230,7 +234,9 @@ Physics engines aren't bit-for-bit deterministic across devices, so clients don'
 4. Host broadcasts `roll` with initial states + faces.
 5. Each client simulates from the initial states **headlessly to rest** (fast-forward), sees which face lands up, and pre-rotates each die's *visual mesh* relative to its physics body so the authoritative face ends up on top. Then it plays the real-time animation. The correction is invisible because it's applied before the first frame.
 
-Shooter's client shows dice leaving their "hand" immediately on throw (local prediction) and seamlessly hands over to the authoritative `roll` (~1 RTT later) — throw arc in the first ~100 ms is the same since it's derived from the same `ThrowInput`.
+Each client actually **records the whole simulation first** and then plays the recording back. That way the playback is exactly the run the correction was computed for, even if physics differs slightly between devices. Impacts recorded during the run drive the sounds. If a die rests cocked against a wall, the last few frames ease it flat. The host also re-plans a throw (up to 8 tries) if its own simulation ends cocked.
+
+The shooter sees "Rolling…" for one round trip, then the same animation as everyone else. Scores and callouts are held back until the dice land.
 
 ### 7.2 Physics
 - **cannon-es**: dice as `Box` bodies with slightly rounded visual meshes, ground plane, and walls forming a table with a back wall the dice bounce off.
@@ -314,10 +320,10 @@ discord-activity-dice/
 
 | Name | Where | Purpose |
 |---|---|---|
-| `VITE_DISCORD_CLIENT_ID` | Pages build env | Public client ID for SDK |
+| `VITE_DISCORD_CLIENT_ID` | build env (`.env`) | Public client ID for SDK |
 | `DISCORD_CLIENT_ID` | Worker var | OAuth token exchange |
 | `DISCORD_CLIENT_SECRET` | Worker **secret** | OAuth token exchange — never shipped to client |
-| `VITE_PEERJS_HOST` / `PORT` / `PATH` | Pages build env | Signaling server |
+| `VITE_PEERJS_HOST` / `PORT` / `PATH` | build env (`.env`) | Signaling server (defaults to PeerJS cloud) |
 | `TURN_*` | Worker secret | Short-lived TURN credentials |
 
 `.env*` and `.dev.vars` are git-ignored.
@@ -328,7 +334,7 @@ discord-activity-dice/
 
 | # | Milestone | Deliverable |
 |---|---|---|
-| **M0** | Scaffold & deploy | Vite + TS project, Cloudflare Pages on `dice.jimandi.love`, Worker route stub |
+| **M0** | Scaffold & deploy | Vite + TS project, Worker with static assets on `dice.jimandi.love` |
 | **M1** | Motion spike ⚠️ | Minimal page that logs DeviceMotion on iOS Safari, Android Chrome, **and inside a Discord Activity on iOS + Android**. Decides whether motion is primary in Discord or flick-only |
 | **M2** | Single-player dice | Table + 2d6 physics, face detection, roll button + pointer flick |
 | **M3** | Shake & throw | `motion.ts` shake energy, throw detection, cup view, audio + haptics, tuning pass on real phones |

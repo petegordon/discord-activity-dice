@@ -50,8 +50,11 @@ export class ThrowController {
     zone.addEventListener("pointercancel", () => this.endHold());
     zone.addEventListener("contextmenu", (e) => e.preventDefault());
 
+    // iOS needs an explicit permission tap. Desktop Chrome also exposes
+    // requestPermission but has no sensors, so only ask on touch devices.
     if (typeof DeviceMotionEvent === "undefined") this.setMotion("unavailable");
-    else if (typeof (DeviceMotionEvent as DeviceMotionEventIOS).requestPermission === "function") this.setMotion("needs-permission");
+    else if (typeof (DeviceMotionEvent as DeviceMotionEventIOS).requestPermission === "function" && matchMedia("(pointer: coarse)").matches)
+      this.setMotion("needs-permission");
     else this.listen();
   }
 
@@ -99,7 +102,8 @@ export class ThrowController {
         clearTimeout(timeout);
         this.setMotion("active");
       }
-      if (this.holding && this.tracker.push(sample)) this.throwNow(this.tracker.throwInput(screen.orientation?.angle ?? 0));
+      this.tracker.screenAngle = screen.orientation?.angle ?? 0;
+      if (this.holding && this.tracker.push(sample)) this.throwNow(this.tracker.throwInput());
     });
   }
 
@@ -151,7 +155,7 @@ export class ThrowController {
 
   private releaseThrow(t: number): ThrowInput | null {
     if (this.motion === "active" && this.tracker.peakEnergy >= SHAKE_TO_THROW) {
-      return this.tracker.throwInput(screen.orientation?.angle ?? 0);
+      return this.tracker.throwInput();
     }
     const recent = this.pointer.filter((p) => t - p.t <= FLICK_WINDOW_MS);
     if (recent.length >= 2) {

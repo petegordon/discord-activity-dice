@@ -56,7 +56,18 @@ for (; rolls < 80; rolls++) {
   let shooter = null;
   for (const p of players) if ((await p.page.evaluate(() => window.dice.self.id)) === shooterId) shooter = p;
   await shooter.page.waitForSelector("#quick-roll:not([hidden])", { timeout: 15_000 });
-  await shooter.page.click("#quick-roll");
+  if (rolls === 0) {
+    // A real gesture: press the cup, wiggle, and flick upward.
+    const box = await shooter.page.locator("#zone").boundingBox();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await shooter.page.mouse.move(x, y);
+    await shooter.page.mouse.down();
+    for (let i = 0; i < 6; i++) await shooter.page.mouse.move(x + (i % 2 ? 40 : -40), y, { steps: 2 });
+    await shooter.page.mouse.move(x, y - 160, { steps: 4 });
+    await shooter.page.mouse.up();
+  } else {
+    await shooter.page.click("#quick-roll");
+  }
   if (rolls === 0) {
     await players[0].page.waitForTimeout(450);
     await players[0].page.screenshot({ path: `${outDir}/${transport}-midroll.png` });

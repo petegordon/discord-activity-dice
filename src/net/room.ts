@@ -3,8 +3,9 @@ import { createGame, type GameState } from "../game/sevenElevenDoubles";
 import type { Envelope, Msg, Player, RollPlan, ThrowInput } from "./protocol";
 import { Emitter, type Transport, type TransportStatus } from "./transport";
 
-/** After a host migration, how long players get to reconnect before being dropped. */
-const RECONNECT_GRACE_MS = 8_000;
+/** How long a player who disconnects (or a whole table after a host migration) has to come back before being dropped. */
+export const RECONNECT_GRACE_MS = 8_000;
+const PRUNE_CHECK_MS = 1_000;
 /** Spacing between successive players' attempts to claim host. */
 const SUCCESSION_STEP_MS = 1_500;
 
@@ -16,7 +17,8 @@ export type RoomEvents = {
   role: (isHost: boolean) => void;
 };
 
-export type Self = { id: string; name: string; avatarUrl?: string };
+/** `key` proves ownership of `id` (see identityKey.ts) and is never broadcast. */
+export type Self = { id: string; key: string; name: string; avatarUrl?: string };
 
 /**
  * Glues a transport to the game. Whoever is host runs a HostAuthority and
@@ -29,14 +31,15 @@ export class Room {
   hostId: string | null = null;
   private authority: HostAuthority | null = null;
   private events = new Emitter<RoomEvents>();
-  private connected = new Set<string>();
-  private graceUntil = 0;
-  private graceTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Host only: players we haven't heard from on the transport, and since when. */
+  private missingSince = new Map<string, number>();
+  private pruneTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly transport: Transport,
     readonly self: Self,
     private readonly plan: PlanFn,
+    private readonly now: () => number = Date.now,
   ) {
     transport.on("message", (env) => this.onMessage(env));
     transport.on("host-change", (isHost) => this.onHostChange(isHost));
@@ -64,7 +67,7 @@ export class Room {
   }
 
   leave() {
-    clearTimeout(this.graceTimer);
+    clearInterval(this.pruneTimer);
     this.transport.close();
   }
 
@@ -108,7 +111,8 @@ export class Room {
   private onMessage(env: Envelope) {
     const { msg } = env;
     if (msg.t === "shake") {
-      if (env.from === this.game.shooterId) this.events.emit("shake", env.from, Number(msg.intensity) || 0);
+      const intensity = Math.min(1, Math.max(0, Number(msg.intensity) || 0));
+      if (env.from === this.game.shooterId) this.events.emit("shake", env.from, intensity);
       return;
     }
     if (env.to === "host") {
@@ -126,32 +130,43 @@ export class Room {
       if (this.players.length) {
         authority.restore(this.players, this.game);
         if (previousHost && previousHost !== this.self.id) authority.leave(previousHost);
-        // Give everyone a moment to find the new host before dropping them.
-        this.graceUntil = Date.now() + RECONNECT_GRACE_MS;
-        clearTimeout(this.graceTimer);
-        this.graceTimer = setTimeout(() => this.prune(), RECONNECT_GRACE_MS + 50);
+        // Everyone else gets the grace period to find the new host.
+        const t = this.now();
+        for (const p of authority.players) if (p.id !== this.self.id) this.missingSince.set(p.id, t);
       }
       this.authority = authority;
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = setInterval(() => this.prune(), PRUNE_CHECK_MS);
       this.broadcast(authority.join(this.self.id, { name: this.self.name, avatarUrl: this.self.avatarUrl }));
     } else {
       this.authority = null;
-      clearTimeout(this.graceTimer);
+      this.missingSince.clear();
+      clearInterval(this.pruneTimer);
       this.transport.send({ t: "hello", player: { name: this.self.name, avatarUrl: this.self.avatarUrl } }, "host");
     }
     this.events.emit("role", isHost);
   }
 
+  /** Host only: who is connected right now. Absent players are dropped after the grace period. */
   private onPeers(ids: string[]) {
-    this.connected = new Set(ids);
-    if (Date.now() >= this.graceUntil) this.prune();
+    if (!this.authority) return;
+    const present = new Set(ids);
+    const t = this.now();
+    for (const p of this.authority.players) {
+      if (p.id === this.self.id || present.has(p.id)) this.missingSince.delete(p.id);
+      else if (!this.missingSince.has(p.id)) this.missingSince.set(p.id, t);
+    }
   }
 
-  private prune() {
+  /** Exposed for tests; runs every second on the host. */
+  prune() {
     if (!this.authority) return;
-    const present = new Set(this.connected);
-    present.add(this.self.id);
-    this.broadcast(this.authority.prune(present));
-    // Late hellos from players who missed the grace window are re-added by join().
+    const t = this.now();
+    const gone = [...this.missingSince].filter(([, since]) => t - since >= RECONNECT_GRACE_MS).map(([id]) => id);
+    if (!gone.length) return;
+    for (const id of gone) this.missingSince.delete(id);
+    const keep = new Set(this.authority.players.map((p) => p.id).filter((id) => !gone.includes(id)));
+    this.broadcast(this.authority.prune(keep));
   }
 
   /** PeerJS migration: claim host in join order, skipping the host that left. */

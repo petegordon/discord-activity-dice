@@ -1,6 +1,7 @@
 import type { Self } from "../net/room";
-import { apiBase, DISCORD_CLIENT_ID } from "./env";
-import { newPlayerId, sanitizeRoom } from "./identity";
+import { apiBase, DISCORD_CLIENT_ID, peerServer } from "./env";
+import { newIdentity } from "../net/identityKey";
+import { sanitizeRoom } from "./identity";
 
 export type DiscordSession = { self: Self; roomId: string };
 
@@ -13,8 +14,8 @@ export async function startDiscord(): Promise<DiscordSession> {
   if (!DISCORD_CLIENT_ID) throw new Error("VITE_DISCORD_CLIENT_ID is not set for this build.");
   const { DiscordSDK, patchUrlMappings } = await import("@discord/embedded-app-sdk");
 
-  // Route PeerJS signaling through the Activity proxy (URL mapping /peerjs → 0.peerjs.com).
-  patchUrlMappings([{ prefix: "/peerjs", target: "0.peerjs.com" }]);
+  // Route PeerJS signaling through the Activity proxy (URL mapping /peerjs → the signaling host).
+  patchUrlMappings([{ prefix: "/peerjs", target: peerServer.host ?? "0.peerjs.com" }]);
 
   const sdk = new DiscordSDK(DISCORD_CLIENT_ID);
   await sdk.ready();
@@ -42,7 +43,7 @@ export async function startDiscord(): Promise<DiscordSession> {
 
   return {
     // A fresh id per session, so the same user on two devices doesn't collide.
-    self: { id: newPlayerId(), name: user.global_name || user.username, avatarUrl },
+    self: { ...(await newIdentity()), name: user.global_name || user.username, avatarUrl },
     roomId: sanitizeRoom(sdk.instanceId),
   };
 }

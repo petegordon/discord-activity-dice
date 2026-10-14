@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { verifyPlayerKey } from "../../src/net/identityKey";
 import { CLIENT_BROADCASTS } from "../../src/net/protocol";
 
 export interface Env {
@@ -15,6 +16,10 @@ const ROOM_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const MAX_SOCKETS_PER_ROOM = 32;
+/** Clients ping every 5s; a socket silent for this long is treated as dead (half-open TCP). */
+const STALE_MS = 16_000;
+/** Shakes are cosmetic; relay at most one per this interval per socket. */
+const SHAKE_MIN_INTERVAL_MS = 40;
 const STUN: RTCIceServer[] = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
 
 type RTCIceServer = { urls: string | string[]; username?: string; credential?: string };
@@ -27,13 +32,20 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === "/api/token" && req.method === "POST") return exchangeToken(req, env);
-    if (url.pathname === "/api/ice" && req.method === "GET") return iceServers(env);
+    if (url.pathname === "/api/ice" && req.method === "GET") return iceServers(req, env);
 
     const relay = url.pathname.match(/^\/api\/relay\/([^/]+)$/);
     if (relay) {
-      const room = decodeURIComponent(relay[1]);
+      let room = "";
+      try {
+        room = decodeURIComponent(relay[1]);
+      } catch {
+        // malformed escape; rejected below
+      }
       const id = url.searchParams.get("id") ?? "";
       if (!ROOM_RE.test(room) || !ID_RE.test(id)) return json({ error: "bad room or id" }, 400);
+      // The id must be derived from the caller's secret key, so nobody can join as (or kick) someone else.
+      if (!(await verifyPlayerKey(id, url.searchParams.get("key")))) return json({ error: "bad key" }, 403);
       if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected websocket" }, 426);
       return env.RELAY.get(env.RELAY.idFromName(room)).fetch(req);
     }
@@ -69,9 +81,20 @@ async function exchangeToken(req: Request, env: Env): Promise<Response> {
   return access_token ? json({ access_token }) : json({ error: "token exchange failed" }, 502);
 }
 
+/**
+ * Only our own pages get TURN credentials (they cost money per GB relayed):
+ * same-origin requests, or the Discord Activity proxy.
+ */
+function fromOurPages(req: Request): boolean {
+  const site = req.headers.get("Sec-Fetch-Site");
+  if (site === "same-origin") return true;
+  const origin = req.headers.get("Origin") ?? "";
+  return /^https:\/\/[0-9]+\.discordsays\.com$/.test(origin) || origin === new URL(req.url).origin;
+}
+
 /** STUN always; short-lived TURN credentials too when a TURN key is configured. */
-async function iceServers(env: Env): Promise<Response> {
-  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return json({ iceServers: STUN });
+async function iceServers(req: Request, env: Env): Promise<Response> {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN || !fromOurPages(req)) return json({ iceServers: STUN });
   try {
     const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate`, {
       method: "POST",
@@ -87,7 +110,7 @@ async function iceServers(env: Env): Promise<Response> {
   }
 }
 
-type Attachment = { id: string; joinedAt: number };
+type Attachment = { id: string; joinedAt: number; lastShake?: number };
 
 /**
  * One instance per room. Relays envelopes between sockets and tells everyone
@@ -126,6 +149,12 @@ export class RelayRoom extends DurableObject<Env> {
     if ((to !== "host" && to !== "all") || !msg || typeof msg.t !== "string") return;
 
     const sender = ws.deserializeAttachment() as Attachment;
+    if (msg.t === "shake") {
+      const now = Date.now();
+      if (now - (sender.lastShake ?? 0) < SHAKE_MIN_INTERVAL_MS) return;
+      ws.serializeAttachment({ ...sender, lastShake: now } satisfies Attachment);
+    }
+    this.evictStale();
     const ordered = this.sockets();
     const host = ordered[0];
     if (!host) return;
@@ -150,6 +179,24 @@ export class RelayRoom extends DurableObject<Env> {
 
   async webSocketError(ws: WebSocket) {
     this.broadcastPeers(ws);
+  }
+
+  /**
+   * A host whose connection died without a close (phone locked, network gone)
+   * would otherwise keep swallowing every "host" message until the runtime
+   * notices. Clients ping every 5s, so silence means it's gone.
+   */
+  private evictStale() {
+    const now = Date.now();
+    let evicted = false;
+    for (const { ws, att } of this.sockets()) {
+      const lastPing = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? att.joinedAt;
+      if (now - Math.max(lastPing, att.joinedAt) > STALE_MS) {
+        ws.close(4001, "stale");
+        evicted = true;
+      }
+    }
+    if (evicted) this.broadcastPeers();
   }
 
   private sockets(exclude?: WebSocket) {

@@ -1,7 +1,8 @@
 import { isEnvelope, type Msg, type Target } from "./protocol";
 import { Emitter, type Transport, type TransportEvents } from "./transport";
 
-const PING_MS = 20_000;
+/** Also how the relay spots a dead host: see STALE_MS in the Worker. */
+const PING_MS = 5_000;
 const MAX_BACKOFF_MS = 8_000;
 
 /**
@@ -18,10 +19,13 @@ export class RelayTransport implements Transport {
   private attempt = 0;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private connectedOnce = false;
+  /** True until the first peers message on the current socket. */
+  private fresh = true;
 
   constructor(
     private readonly roomId: string,
     private readonly selfId: string,
+    private readonly key: string,
     private readonly apiBase: string,
   ) {}
 
@@ -38,6 +42,7 @@ export class RelayTransport implements Transport {
     const base = new URL(`${this.apiBase}/relay/${encodeURIComponent(this.roomId)}`, location.href);
     base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
     base.searchParams.set("id", this.selfId);
+    base.searchParams.set("key", this.key);
     return base.toString();
   }
 
@@ -49,6 +54,7 @@ export class RelayTransport implements Transport {
     ws.onopen = () => {
       opened = true;
       this.attempt = 0;
+      this.fresh = true;
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send("ping"), PING_MS);
     };
@@ -91,7 +97,10 @@ export class RelayTransport implements Transport {
   private onPeers(ids: string[]) {
     const hostId = ids[0] ?? null;
     const isHost = hostId === this.selfId;
-    const changed = hostId !== this.hostId;
+    // After a reconnect the host may well be unchanged, but it may have dropped
+    // us meanwhile, so re-announce ourselves either way.
+    const changed = hostId !== this.hostId || this.fresh;
+    this.fresh = false;
     this.hostId = hostId;
     this.isHost = isHost;
     if (changed) this.events.emit("host-change", isHost);

@@ -13,7 +13,8 @@ import { Room, type Self } from "./net/room";
 import type { Transport } from "./net/transport";
 import { startDiscord } from "./platform/discord";
 import { apiBase, debug, inDiscord, peerServer, transportChoice } from "./platform/env";
-import { inviteLink, newPlayerId, standaloneRoom, storedName, storeName } from "./platform/identity";
+import { inviteLink, standaloneRoom, storedName, storeName } from "./platform/identity";
+import { newIdentity } from "./net/identityKey";
 import { DiceScene } from "./render/scene";
 import { UI } from "./ui";
 
@@ -47,6 +48,8 @@ async function peerOptions(): Promise<PeerOptions> {
 
 async function boot() {
   const audio = new DiceAudio();
+  const transportKind = transportChoice();
+  let roomId = "";
   let room: Room | null = null;
   let controller: ThrowController | null = null;
 
@@ -80,7 +83,6 @@ async function boot() {
 
   // ---- identity & room ----
   let self: Self;
-  let roomId: string;
   if (inDiscord) {
     try {
       ({ self, roomId } = await startDiscord());
@@ -92,14 +94,14 @@ async function boot() {
     roomId = standaloneRoom();
     const name = storedName() ?? (await ui.askName(""));
     storeName(name);
-    self = { id: newPlayerId(), name };
+    self = { ...(await newIdentity()), name };
   }
   ui.setRoom(roomId, !inDiscord);
 
-  const transportKind = transportChoice();
   ui.status({ kind: "connecting" });
   const transport: Transport =
-    transportKind === "relay" ? new RelayTransport(roomId, self.id, apiBase) : new PeerJsTransport(roomId, self.id, await peerOptions());
+    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase)
+      : new PeerJsTransport(roomId, self.id, self.key, await peerOptions());
   room = new Room(transport, self, (rollId, shooter, input) => planRoll(rollId, shooter, input));
   const r = room;
 

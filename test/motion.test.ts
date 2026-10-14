@@ -57,14 +57,24 @@ describe("ShakeTracker", () => {
     expect(input.speed).toBeGreaterThan(0.6);
   });
 
-  it("maps a sideways push using screen orientation", () => {
+  it("maps device axes to the table using screen orientation", () => {
+    // Landscape at 90°: the device's +Y axis points to the player's left, +X points up the screen.
+    const left = new ShakeTracker();
+    feed(left, 0, 160, (t) => (t < 100 ? { ay: 25, az: -10 } : {}));
+    expect(Math.abs(left.throwInput(0).dir[0])).toBeLessThan(0.2);
+    expect(left.throwInput(90).dir[0]).toBeLessThan(-0.5);
+
+    const up = new ShakeTracker();
+    feed(up, 0, 160, (t) => (t < 100 ? { ax: 25 } : {}));
+    const t = up.throwInput(90);
+    expect(t.dir[1]).toBeGreaterThan(0.9); // up the landscape screen is forward
+  });
+
+  it("does not treat a hard sideways stroke followed by stillness as a flick", () => {
     const tr = new ShakeTracker();
-    // Landscape (90°): device +Y points to the player's left... a push along device −Y reads as rightward.
-    feed(tr, 0, 160, (t) => (t < 100 ? { ay: -25, az: -10 } : {}));
-    const portrait = tr.throwInput(0);
-    const landscape = tr.throwInput(90);
-    expect(Math.abs(portrait.dir[0])).toBeLessThan(0.2);
-    expect(Math.abs(landscape.dir[0])).toBeGreaterThan(0.5);
+    feed(tr, 0, 1000, shake);
+    const flick = feed(tr, 1000, 1600, (t) => (t < 1060 ? { ax: 30 } : t < 1110 ? { ax: -28 } : {}));
+    expect(flick).toBeNull();
   });
 });
 

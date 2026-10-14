@@ -58,8 +58,7 @@ export function removePlayer(state: GameState, id: string): GameState {
   const idx = state.turnOrder.indexOf(id);
   if (idx === -1) return state;
   const turnOrder = state.turnOrder.filter((p) => p !== id);
-  const scores = { ...state.scores };
-  delete scores[id];
+  // Scores are kept, so a player who drops out and rejoins mid-match gets theirs back.
 
   if (turnOrder.length === 0) {
     return { ...createGame(state.target), history: state.history };
@@ -76,7 +75,6 @@ export function removePlayer(state: GameState, id: string): GameState {
     ...state,
     phase,
     turnOrder,
-    scores,
     shooterId,
     streak,
     firstShooterIndex: Math.min(state.firstShooterIndex, turnOrder.length - 1),

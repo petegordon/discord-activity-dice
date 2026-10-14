@@ -24,6 +24,8 @@ const FLICK_MAX_GAP_MS = 260;
 /** Release velocity (m/s) that reads as a full-speed throw. */
 const FULL_SPEED = 2.2;
 const FULL_SPIN = 900; // deg/s
+/** A flick must have moved the phone forward at least this fast (m/s), more forward than sideways. */
+const FLICK_MIN_FORWARD = 0.5;
 /** Shaking at least this much during a hold makes a release count as a throw. */
 export const SHAKE_TO_THROW = 0.12;
 
@@ -75,9 +77,27 @@ export class ShakeTracker {
     const recentSpike = this.quietSince - this.spikeAt >= 0 && this.quietSince - this.spikeAt <= FLICK_MAX_GAP_MS;
     if (recentSpike && s.t - this.quietSince >= FLICK_QUIET_MS) {
       this.spikeAt = -Infinity;
-      return true;
+      // A hard final shake stroke then holding still looks the same; only a forward motion counts.
+      const { forward, sideways } = this.tableVelocity();
+      return forward >= FLICK_MIN_FORWARD && forward > Math.abs(sideways);
     }
     return false;
+  }
+
+  /** screen.orientation.angle, kept current by the controller. */
+  screenAngle = 0;
+
+  /**
+   * Peak velocity mapped to the table: device axes rotated into screen axes
+   * (the screen is rotated counter-clockwise by screenAngle relative to the
+   * device), then pushing away (−Z) or up the screen (+Y) is forward.
+   */
+  private tableVelocity(screenAngle = this.screenAngle) {
+    const [vx, vy, vz] = this.peakVelocity();
+    const rad = (screenAngle * Math.PI) / 180;
+    const sx = vx * Math.cos(rad) - vy * Math.sin(rad);
+    const sy = vx * Math.sin(rad) + vy * Math.cos(rad);
+    return { forward: Math.max(0, -vz) + Math.max(0, sy) * 0.6, sideways: sx };
   }
 
   /** Peak velocity reached within the recent window, integrated from rest. */
@@ -106,13 +126,8 @@ export class ShakeTracker {
    * screen.orientation.angle, used to map device axes to the table.
    * Phone held facing the player: pushing it away (−Z) or up (+Y) is forward.
    */
-  throwInput(screenAngle = 0): ThrowInput {
-    const [vx, vy, vz] = this.peakVelocity();
-    const rad = (-screenAngle * Math.PI) / 180;
-    const sx = vx * Math.cos(rad) - vy * Math.sin(rad);
-    const sy = vx * Math.sin(rad) + vy * Math.cos(rad);
-    const forward = Math.max(0, -vz) + Math.max(0, sy) * 0.6;
-    const sideways = sx;
+  throwInput(screenAngle = this.screenAngle): ThrowInput {
+    const { forward, sideways } = this.tableVelocity(screenAngle);
     const speedRaw = Math.hypot(forward, sideways) / FULL_SPEED;
     const rot = this.window.reduce((m, s) => Math.max(m, s.rot), 0);
     const spin = rot > 0 ? rot / FULL_SPIN : this.peakEnergy;

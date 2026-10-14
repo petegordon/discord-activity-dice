@@ -1,11 +1,21 @@
 import Peer, { type DataConnection, type PeerError, type PeerOptions } from "peerjs";
+import { verifyPlayerKey } from "./identityKey";
 import { CLIENT_BROADCASTS, isEnvelope, type Envelope, type Msg, type Target } from "./protocol";
 import { Emitter, type Transport, type TransportEvents } from "./transport";
 
 const HEARTBEAT_MS = 3_000;
 const DEAD_AFTER_MS = 10_000;
 const JOIN_TIMEOUT_MS = 12_000;
+/** First connect: give up after this many failed rounds. */
 const MAX_ATTEMPTS = 8;
+/**
+ * After losing the host, keep trying for this long. A host that crashed (no
+ * clean close) keeps its id registered until the signaling server times it
+ * out (~60s on the PeerJS cloud), so joins hang until then.
+ */
+const MIGRATION_DEADLINE_MS = 120_000;
+/** Shakes are cosmetic; forward at most this often per player. */
+const SHAKE_MIN_INTERVAL_MS = 40;
 const KEEPALIVE = "ping";
 
 class FatalError extends Error {}
@@ -33,13 +43,16 @@ export class PeerJsTransport implements Transport {
   private hostConn: DataConnection | null = null;
   private conns = new Map<string, DataConnection>();
   private lastSeen = new Map<DataConnection, number>();
+  private lastShake = new Map<string, number>();
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private closed = false;
+  private establishing = false;
   private readonly hostPeerId: string;
 
   constructor(
     roomId: string,
     private readonly selfId: string,
+    private readonly key: string,
     private readonly options: PeerOptions,
   ) {
     this.hostPeerId = `dice-${roomId}-host`;
@@ -52,24 +65,44 @@ export class PeerJsTransport implements Transport {
   async connect() {
     this.events.emit("status", { kind: "connecting" });
     this.heartbeat = setInterval(() => this.beat(), HEARTBEAT_MS);
-    await this.establish();
+    await this.establish(null);
   }
 
-  private async establish() {
-    for (let attempt = 0; !this.closed; attempt++) {
-      try {
-        if ((await this.claimHost()) === "host") return this.becameConnected(true);
-        const joined = await this.joinHost();
-        if (joined === "joined") return this.becameConnected(false);
-        if (joined === "timeout") throw new FatalError("Couldn't open a peer-to-peer connection to the host. Try the relay link.");
-        // "no-host": the host left between our claim and join. Try again.
-      } catch (err) {
-        if (err instanceof FatalError || attempt >= MAX_ATTEMPTS) {
-          this.events.emit("status", { kind: "failed", reason: (err as Error).message });
+  /**
+   * Claim host, or join whoever holds it. `deadline` is null on first connect,
+   * where a WebRTC timeout means this network can't do peer-to-peer and we say
+   * so; during a migration a timeout usually means a crashed host's id hasn't
+   * expired yet, so we keep going until the deadline.
+   */
+  private async establish(deadline: number | null) {
+    if (this.establishing) return;
+    this.establishing = true;
+    try {
+      for (let attempt = 0; !this.closed; attempt++) {
+        try {
+          if ((await this.claimHost()) === "host") return this.becameConnected(true);
+          const joined = await this.joinHost();
+          if (joined === "joined") return this.becameConnected(false);
+          if (joined === "timeout" && deadline === null) {
+            throw new FatalError("Couldn't open a peer-to-peer connection to the host. Try the relay link.");
+          }
+          // "no-host" (it left between our claim and join) or a migration timeout: try again.
+        } catch (err) {
+          const outOfTime = deadline === null ? attempt >= MAX_ATTEMPTS : Date.now() > deadline;
+          if (err instanceof FatalError || outOfTime) {
+            this.events.emit("status", { kind: "failed", reason: (err as Error).message });
+            throw err;
+          }
+        }
+        if (deadline !== null && Date.now() > deadline) {
+          const err = new FatalError("Lost the host and couldn't find a new one.");
+          this.events.emit("status", { kind: "failed", reason: err.message });
           throw err;
         }
+        await sleep(Math.min(4_000, 250 * 2 ** attempt));
       }
-      await sleep(Math.min(4_000, 250 * 2 ** attempt));
+    } finally {
+      this.establishing = false;
     }
   }
 
@@ -93,12 +126,28 @@ export class PeerJsTransport implements Transport {
         resolve("host");
       });
       peer.on("error", (err: PeerError<string>) => {
-        if (this.hostPeer === peer) return; // errors after we became host are non-fatal
+        if (this.hostPeer === peer) {
+          // While we were away someone else took over the host id: step down and join them.
+          if (err.type === "unavailable-id") this.stepDown();
+          return;
+        }
         peer.destroy();
         if (err.type === "unavailable-id") resolve("taken");
         else reject(new Error(`Signaling error: ${err.type}`));
       });
     });
+  }
+
+  private stepDown() {
+    if (this.closed || !this.hostPeer) return;
+    const old = this.hostPeer;
+    this.hostPeer = null;
+    this.isHost = false;
+    for (const conn of this.conns.values()) conn.close();
+    this.conns.clear();
+    old.destroy();
+    this.events.emit("status", { kind: "reconnecting" });
+    void this.establish(Date.now() + MIGRATION_DEADLINE_MS).catch(() => {});
   }
 
   private ensureClientPeer(): Promise<Peer> {
@@ -121,7 +170,7 @@ export class PeerJsTransport implements Transport {
       const conn = peer.connect(this.hostPeerId, {
         reliable: true,
         serialization: "json",
-        metadata: { playerId: this.selfId },
+        metadata: { playerId: this.selfId, key: this.key },
       });
       let settled = false;
       const finish = (r: JoinResult) => {
@@ -160,45 +209,57 @@ export class PeerJsTransport implements Transport {
     this.lastSeen.clear();
     if (this.closed) return;
     this.events.emit("status", { kind: "reconnecting" });
+    const deadline = Date.now() + MIGRATION_DEADLINE_MS;
     void (async () => {
       await sleep(this.successionDelay());
-      try {
-        await this.establish();
-      } catch {
-        // status already reported
-      }
+      await this.establish(deadline).catch(() => {}); // status already reported
     })();
   }
 
   private acceptConnection(conn: DataConnection) {
-    const playerId = (conn.metadata as { playerId?: unknown } | undefined)?.playerId;
-    if (typeof playerId !== "string" || !playerId || playerId === this.selfId) {
-      conn.close();
-      return;
-    }
-    conn.on("open", () => {
-      this.conns.get(playerId)?.close();
-      this.conns.set(playerId, conn);
-      this.lastSeen.set(conn, Date.now());
-      this.events.emit("peers", [this.selfId, ...this.conns.keys()]);
+    const meta = conn.metadata as { playerId?: unknown; key?: unknown } | undefined;
+    const playerId = meta?.playerId;
+    let verified = false;
+    const ready = typeof playerId === "string" && playerId !== this.selfId ? verifyPlayerKey(playerId, meta?.key) : Promise.resolve(false);
+    void ready.then((ok) => {
+      verified = ok;
+      if (!ok) conn.close();
+      else if (conn.open) this.admit(playerId as string, conn);
     });
+    conn.on("open", () => verified && this.admit(playerId as string, conn));
     conn.on("data", (data) => {
+      if (!verified) return;
       this.lastSeen.set(conn, Date.now());
       if (!isEnvelope(data)) return;
+      const id = playerId as string;
       // Never trust the sender's claimed identity.
-      const env: Envelope = { ...data, from: playerId };
+      const env: Envelope = { ...data, from: id };
       if (env.to === "all") {
         if (!CLIENT_BROADCASTS.has(env.msg.t)) return;
-        this.forward(env, playerId);
+        const now = Date.now();
+        if (env.msg.t === "shake" && now - (this.lastShake.get(id) ?? 0) < SHAKE_MIN_INTERVAL_MS) return;
+        this.lastShake.set(id, now);
+        this.forward(env, id);
       }
       this.events.emit("message", env);
     });
     conn.on("close", () => {
       this.lastSeen.delete(conn);
-      if (this.conns.get(playerId) !== conn) return;
-      this.conns.delete(playerId);
+      const id = playerId as string;
+      if (this.conns.get(id) !== conn) return;
+      this.conns.delete(id);
       this.events.emit("peers", [this.selfId, ...this.conns.keys()]);
     });
+  }
+
+  private admit(playerId: string, conn: DataConnection) {
+    if (this.conns.get(playerId) === conn) return;
+    const previous = this.conns.get(playerId);
+    // Register the new connection first, so closing the old one isn't seen as a departure.
+    this.conns.set(playerId, conn);
+    this.lastSeen.set(conn, Date.now());
+    previous?.close();
+    this.events.emit("peers", [this.selfId, ...this.conns.keys()]);
   }
 
   private forward(env: Envelope, except: string) {

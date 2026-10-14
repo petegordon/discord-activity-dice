@@ -121,3 +121,22 @@ describe("players joining and leaving", () => {
     expect(g.winnerId).toBeNull();
   });
 });
+
+describe("rejoining", () => {
+  it("restores a player's score when they come back mid-match", () => {
+    let g = game(["a", "b"]);
+    g = applyRoll(g, "r1", [3, 3]); // a: 2
+    g = removePlayer(g, "a");
+    expect(g.turnOrder).toEqual(["b"]);
+    g = addPlayer(g, "a");
+    expect(g.scores.a).toBe(2);
+    expect(g.turnOrder).toEqual(["b", "a"]);
+  });
+
+  it("starts the next match without departed players' scores", () => {
+    let g = game(["a", "b"]);
+    g = applyRoll(g, "r1", [3, 3]);
+    g = startMatch(rematch(removePlayer(g, "a")));
+    expect(g.scores).toEqual({ b: 0 });
+  });
+});
