@@ -180,11 +180,11 @@ A points race with two dice.
 ### 6.1 Rules
 - Players take turns as the **shooter** in join order.
 - Each roll:
-  - **Hit**: a total of **7**, a total of **11**, or **doubles** (both dice show the same face) → shooter scores **+1 point** and **rolls again**.
+  - **Hit**: a total of **7** or **11** → **+1 point**; **doubles** (both dice show the same face) → **+2 points**. Either way the shooter **rolls again**.
   - **Miss**: anything else → the turn ends and the dice pass to the next player.
-- A roll scores at most 1 point. The three hit types can't overlap anyway: 7 and 11 are odd and doubles always total an even number.
+- The hit types never overlap: 7 and 11 are odd and doubles always total an even number, so each roll is worth 0, 1 or 2 points.
 - **Match end:** the first player to reach the target wins immediately, even mid-streak. The default target is **10 points**; the host can pick 5, 10 or 21 in the lobby.
-- **Hit chance:** 7 is 6/36, 11 is 2/36 and doubles are 6/36, so a roll hits 14/36 ≈ **39%** of the time. An average turn scores about 0.64 points, so a 10-point match with 2–4 players takes roughly 15–30 turns.
+- **Odds:** 7 is 6/36, 11 is 2/36 and doubles are 6/36, so a roll hits 14/36 ≈ **39%** of the time and is worth 20/36 ≈ 0.56 points on average. An average turn scores about 0.9 points, so each player needs roughly 11 turns to reach 10.
 - Players joining mid-match go to the end of the turn order with 0 points.
 - If the shooter disconnects, the dice pass to the next player. If only one player is left, the match pauses in the lobby.
 - After a match, the host can start a **rematch**: scores reset and the first shooter rotates.
@@ -208,11 +208,11 @@ type GameState = {
 };
 ```
 
-The host runs a pure reducer `applyRoll(state, faces) → state`, which is easy to unit-test. `classify(faces) → HitKind | null` checks doubles first, then a total of 7 or 11.
+The host runs a pure reducer `applyRoll(state, faces) → state`, which is easy to unit-test. `classify(faces) → HitKind | null` checks doubles first, then a total of 7 or 11; `HIT_POINTS = { seven: 1, eleven: 1, doubles: 2 }`.
 
 ### 6.3 Announcements
 After each roll, a large callout appears on screen:
-- **"SEVEN!"**, **"YO-LEVEN!"**, **"DOUBLE 4s!"**: point scored, roll again
+- **"SEVEN!"** or **"YO-LEVEN!"** (+1), **"DOUBLE 4s!"** (+2): points scored, roll again
 - streak callouts such as **"3 IN A ROW!"**
 - **"Miss — dice to Bob"**
 - **"ALICE WINS!"** with confetti at match end
@@ -260,7 +260,7 @@ Shooter's client shows dice leaving their "hand" immediately on throw (local pre
 │   │  HOLD & SHAKE  — flick to throw │       │  ← shooter only: cup / shake zone
 │   ╰─────────────────────────────────╯       │
 ├─────────────────────────────────────────────┤
-│ Bob: 3 + 3 = 6 → DOUBLES! +1, roll again    │  ← roll log
+│ Bob: 3 + 3 = 6 → DOUBLES! +2, roll again    │  ← roll log
 └─────────────────────────────────────────────┘
 ```
 
@@ -361,6 +361,3 @@ discord-activity-dice/
 | Public PeerJS cloud unreliable / not mappable | Self-host PeerJS or Worker-based signaling |
 | Physics divergence across devices | Host-authoritative faces + mesh re-orientation |
 | Mobile GPU performance | Shadow toggle, DPR cap, simple geometry |
-
-**Open questions**
-1. Should doubles score more than 7 or 11 (e.g. double 6s = 2 points)? v1 scores every hit as 1 point.
