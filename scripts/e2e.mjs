@@ -32,6 +32,23 @@ for (let i = 0; i < count; i++) {
   await page.waitForTimeout(300);
 }
 
+process.on("unhandledRejection", async (e) => {
+  console.log("FAILED:", e.message.split("\n")[0], "at line", (e.stack.match(/e2e\.mjs:(\d+)/) ?? [])[1]);
+  for (const p of players) {
+    try {
+      console.log(p.name, JSON.stringify(await p.page.evaluate(() => ({
+        isHost: window.dice.room.isHost, hostId: window.dice.room.hostId, self: window.dice.self.id,
+        players: window.dice.room.players.map((x) => x.id), phase: window.dice.room.game.phase, shooter: window.dice.room.game.shooterId,
+        hist: window.dice.room.game.history.length, rolling: window.dice.scene.isRolling,
+        zone: document.querySelector(".zone-title")?.textContent, hint: document.getElementById("hint").textContent,
+        status: document.getElementById("status").textContent,
+      }))));
+    } catch (err) { console.log(p.name, "eval failed", err.message); }
+  }
+  console.log("errors:", errors);
+  process.exit(2);
+});
+
 const snapshot = (p) => p.page.evaluate(() => ({ players: window.dice.room.players.map((x) => x.name), game: window.dice.room.game, isHost: window.dice.room.isHost }));
 
 // Everyone sees everyone.
@@ -53,6 +70,7 @@ for (; rolls < 80; rolls++) {
   const s = await snapshot(players[0]);
   if (s.game.phase === "matchOver") break;
   const shooterId = s.game.shooterId;
+  const prevRoll = s.game.history[0]?.rollId ?? null;
   let shooter = null;
   for (const p of players) if ((await p.page.evaluate(() => window.dice.self.id)) === shooterId) shooter = p;
   await shooter.page.waitForSelector("#quick-roll:not([hidden])", { timeout: 15_000 });
@@ -74,7 +92,7 @@ for (; rolls < 80; rolls++) {
   }
   // Wait until every player has finished animating this roll.
   await Promise.all(
-    players.map((p) => p.page.waitForFunction((n) => (window.dice.room.game.history.length >= n) && !window.dice.scene.isRolling, rolls + 1, { timeout: 20_000, polling: 200 })),
+    players.map((p) => p.page.waitForFunction((prev) => window.dice.room.game.history[0]?.rollId !== prev && !window.dice.scene.isRolling, prevRoll, { timeout: 20_000, polling: 200 })),
   ).catch(async (e) => {
     for (const p of players) console.log(p.name, await p.page.evaluate(() => ({ hist: window.dice.room.game.history.length, rolling: window.dice.scene.isRolling, vis: document.visibilityState })));
     throw e;

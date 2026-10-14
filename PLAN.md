@@ -346,6 +346,18 @@ discord-activity-dice/
 
 ---
 
+### Build status (2026-10-14)
+
+| # | Status |
+|---|---|
+| M0 | ✅ Deployed as a Worker at https://discord-activity-dice.pete-872.workers.dev. The  custom domain is configured but not attached: the  zone isn't on this Cloudflare account yet |
+| M1 | ⏳ Needs real phones and a Discord app. Motion detection is unit-tested against synthetic traces; the in-Discord sensor question is still open |
+| M2–M6 | ✅ Built. Unit-tested, plus a headless multi-player e2e () on both transports, locally and in production |
+| M7 | 🟡 Code complete (SDK auth, ,  paths,  rooms). Needs a Discord application ID and secret |
+| M8 | ✅ Host migration, relay transport, stale-host eviction, reconnect grace, optional TURN. 🟡 Mobile performance tuning on real devices |
+
+Known limitation: if a PeerJS host leaves just as it broadcasts a roll, a player who missed that message may take over from slightly older state, and that roll is lost.
+
 ## 12. Testing
 
 - **Unit (Vitest):** `sevenElevenDoubles` reducer (all 36 face combinations classified, streaks, turn passing, win mid-streak, rematch), face detection, mesh re-orientation math (every face → every target face), throw normalization/clamping, shake/throw detector against recorded motion traces, host election ordering.

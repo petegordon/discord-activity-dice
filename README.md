@@ -16,6 +16,10 @@ Built with Three.js, cannon-es, the DeviceMotion API, PeerJS (WebRTC) and a Clou
    - **With a mouse or without motion:** wiggle, then flick upward.
    - **Quick roll** is always there as an alternative.
 
+## Playing on phones
+
+DeviceMotion, WebCrypto and WebRTC all need **HTTPS**, so test on phones with the deployed site (or an HTTPS tunnel), not `http://<lan-ip>:5173`.
+
 ## Development
 
 ```bash
@@ -51,7 +55,9 @@ Add `&debug` to expose `window.dice` and turn on PeerJS logging.
 
 ## Deploying to Cloudflare
 
-The Worker serves the static build, `/api/*` and the relay. `wrangler.jsonc` binds it to the custom domain `dice.jimandi.love`, so the `jimandi.love` zone must be on the same Cloudflare account.
+The Worker serves the static build, `/api/*` and the relay. It's live at **https://discord-activity-dice.pete-872.workers.dev**.
+
+`wrangler.jsonc` also binds it to the custom domain `dice.jimandi.love`. That needs the `jimandi.love` zone on the same Cloudflare account. Until the zone is added, `wrangler deploy` uploads everything and then reports `Can't infer zone from route` for the custom domain only.
 
 ```bash
 npx wrangler login
