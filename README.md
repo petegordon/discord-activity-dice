@@ -84,9 +84,9 @@ npx wrangler secret put TURN_KEY_API_TOKEN
    | `/peerjs` | `0.peerjs.com` (only needed if you force `t=peerjs`) |
 
 4. Under **OAuth2**, add the redirect `https://127.0.0.1` (the Embedded App SDK requires one, but it isn't used).
-5. Put the public application ID in two places:
+5. Put the public application ID (this project: `1560074262008700930`) in two places:
    - `wrangler.jsonc` → `vars.DISCORD_CLIENT_ID`
-   - a `.env` file containing `VITE_DISCORD_CLIENT_ID=<id>` (read at build time)
+   - `.env.production` → `VITE_DISCORD_CLIENT_ID=<id>` (read at build time; committed, as it holds no secrets)
 6. Set the secret with `npx wrangler secret put DISCORD_CLIENT_SECRET`, then run `npm run deploy`.
 7. In the developer portal's **General Information**, set:
    - **Terms of Service URL:** https://dice.housetandem.com/terms

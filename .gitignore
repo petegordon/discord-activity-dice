@@ -3,6 +3,8 @@ dist/
 .wrangler/
 .env
 .env.*
+# Public build settings only (no secrets) — committed so deploys are reproducible.
+!.env.production
 .dev.vars
 *.log
 .DS_Store
