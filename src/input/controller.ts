@@ -157,7 +157,11 @@ export class ThrowController {
     if (this.motion === "active" && this.tracker.peakEnergy >= SHAKE_TO_THROW) {
       return this.tracker.throwInput();
     }
-    const recent = this.pointer.filter((p) => t - p.t <= FLICK_WINDOW_MS);
+    let recent = this.pointer.filter((p) => t - p.t <= FLICK_WINDOW_MS);
+    // A slow device may deliver pointer events further apart than the window;
+    // fall back to the last two samples if the final one is fresh.
+    const last2 = this.pointer.slice(-2);
+    if (recent.length < 2 && last2.length === 2 && t - last2[1].t <= FLICK_WINDOW_MS) recent = last2;
     if (recent.length >= 2) {
       const a = recent[0];
       const b = recent[recent.length - 1];

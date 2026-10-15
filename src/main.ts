@@ -127,7 +127,8 @@ async function boot() {
     const mine = myTurn();
     controller?.setEnabled(mine);
     if (shown.phase !== "awaitingThrow") ui.setZone("hidden");
-    else if (rolling || cooling || awaitingAck !== undefined) ui.setZone("rolling");
+    else if (rolling || awaitingAck !== undefined) ui.setZone("rolling");
+    else if (cooling) ui.setZone("settling", { shooterName: shooter?.id === self.id ? undefined : shooter?.name });
     else if (mine) ui.setZone("mine", { color: shooter?.color, motion: controller?.motion === "active" });
     else ui.setZone("waiting", { shooterName: shooter?.name });
     ui.showEnableMotion(mine && controller?.motion === "needs-permission");

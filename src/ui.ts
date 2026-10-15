@@ -177,7 +177,7 @@ export class UI {
   }
 
   /** The cup zone: yours to shake, or showing whose turn it is. */
-  setZone(state: "mine" | "rolling" | "waiting" | "hidden", opts: { color?: string; motion?: boolean; shooterName?: string } = {}) {
+  setZone(state: "mine" | "rolling" | "settling" | "waiting" | "hidden", opts: { color?: string; motion?: boolean; shooterName?: string } = {}) {
     const zone = this.zone;
     zone.hidden = state === "hidden";
     zone.classList.toggle("mine", state === "mine");
@@ -191,6 +191,10 @@ export class UI {
       zone.setAttribute("aria-label", "Hold and shake to roll the dice");
     } else if (state === "rolling") {
       title.textContent = "Rolling…";
+      sub.textContent = "";
+    } else if (state === "settling") {
+      // The short pause after the dice land, before the next throw.
+      title.textContent = opts.shooterName ? `${opts.shooterName}'s up next` : "Get ready…";
       sub.textContent = "";
     } else {
       title.textContent = opts.shooterName ? `${opts.shooterName} is rolling` : "Waiting…";

@@ -7,6 +7,14 @@ A multiplayer two-dice game with 3D dice that you **shake and throw with your ph
 
 Built with Three.js, cannon-es, the DeviceMotion API, PeerJS (WebRTC) and a Cloudflare Worker with a Durable Object relay. See [PLAN.md](PLAN.md) for the full design.
 
+## Screenshots
+
+| Hold & shake | Seven | Doubles | Winner |
+|---|---|---|---|
+| ![Holding the cup to shake the dice](public/screenshots/shaking.png) | ![SEVEN! +1, roll again](public/screenshots/seven.png) | ![Doubles, +2, roll again](public/screenshots/doubles.png) | ![You win! with final scores](public/screenshots/win.png) |
+
+More in the [gallery](https://dice.housetandem.com/screenshots/). To regenerate them, run `node scripts/screenshots.mjs`. It plays real games on the live site (no rigged dice) and captures each outcome as it happens.
+
 ## How to play
 
 1. Open the site. It creates a room and puts its code in the URL. Use **Copy invite** to share it.
