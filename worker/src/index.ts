@@ -3,6 +3,7 @@ import { verifyPlayerKey } from "../../src/net/identityKey";
 import { CLIENT_BROADCASTS } from "../../src/net/protocol";
 import { splitPeers, type Attachment } from "./peers";
 import { DISCORD_ROOM_RE, discordRoom, roomTicket, verifyRoomTicket } from "./roomTicket";
+import { RANGED_RE, withRanges } from "./ranges";
 
 export interface Env {
   RELAY: DurableObjectNamespace<RelayRoom>;
@@ -60,6 +61,7 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
+    if (RANGED_RE.test(url.pathname) && (req.method === "GET" || req.method === "HEAD")) return withRanges(req, env.ASSETS);
     return env.ASSETS.fetch(req);
   },
 } satisfies ExportedHandler<Env>;

@@ -10,7 +10,8 @@
     // A missing file is a 404, never the game page: during a deploy, a script that hasn't arrived
     // yet must fail as a script so public/boot-guard.js can reload the page.
     "not_found_handling": "none",
-    "run_worker_first": ["/api/*"]
+    // /screenshots/ runs the worker so the demo reel videos can answer Range requests (worker/src/ranges.ts).
+    "run_worker_first": ["/api/*", "/screenshots/*"]
   },
   "durable_objects": {
     "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }]
