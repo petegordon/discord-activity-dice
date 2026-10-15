@@ -19,6 +19,24 @@
         color: var(--muted);
         margin: 4px 0 0;
       }
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      .ctas .cta {
+        margin-top: 0;
+      }
+      .cta.alt {
+        background: #5865f2;
+        color: #fff;
+      }
+      .cta.plain {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
       .cta {
         display: inline-block;
         margin-top: 16px;
@@ -70,7 +88,11 @@
       <header>
         <h1>7, 11, Doubles</h1>
         <p class="lede">Shake your phone, throw the dice. Roll 7 or 11 for +1, doubles for +2. Hit and you roll again.</p>
-        <a class="cta" href="/">Play now</a>
+        <div class="ctas">
+          <a class="cta" href="/">Play in your browser</a>
+          <a class="cta alt" href="https://discord.com/activities/1560074262008700930" rel="noopener">Play in Discord</a>
+          <a class="cta plain" href="https://discord.com/oauth2/authorize?client_id=1560074262008700930" rel="noopener">Add to your Discord server</a>
+        </div>
       </header>
 
       <figure class="hero">
@@ -110,6 +132,8 @@
       </div>
 
       <nav>
+        <a href="https://discord.com/activities/1560074262008700930" rel="noopener">Play in Discord</a>
+        <a href="https://discord.com/oauth2/authorize?client_id=1560074262008700930" rel="noopener">Add to Discord</a>
         <a href="/">Play 7, 11, Doubles</a>
         <a href="https://github.com/petegordon/discord-activity-dice">Source on GitHub</a>
         <a href="/terms">Terms</a>

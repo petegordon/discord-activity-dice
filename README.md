@@ -5,6 +5,16 @@ A multiplayer two-dice game with 3D dice that you **shake and throw with your ph
 - Roll **7** or **11** for **+1**. Roll **doubles** for **+2**. Hit and you roll again; miss and the dice pass on.
 - First to the target (5, 10 or 21) wins.
 
+## Play
+
+| | Link |
+|---|---|
+| **In your browser** | https://dice.housetandem.com |
+| **In Discord** (opens the Activity) | https://discord.com/activities/1560074262008700930 |
+| **Add it to a Discord server** | https://discord.com/oauth2/authorize?client_id=1560074262008700930 |
+
+To launch the Discord Activity, the app must be installed in the server you're in. You can add tags to the Activity link to see where players come from: `?referrer_id=<a Discord user ID>` or `?custom_id=<label>` (see [Discord's growth and referrals guide](https://docs.discord.com/developers/activities/development-guides/growth-and-referrals)).
+
 Built with Three.js, cannon-es, the DeviceMotion API, PeerJS (WebRTC) and a Cloudflare Worker with a Durable Object relay. See [PLAN.md](PLAN.md) for the full design.
 
 ## Screenshots
