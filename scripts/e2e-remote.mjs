@@ -37,7 +37,10 @@ async function table(name) {
   const page = await ctx.newPage();
   watch(page, name);
   await page.goto(`${base}/?room=${room}&t=${transport}&nomotion&debug`);
-  await page.waitForFunction(() => window.dice?.room?.players?.length > 0, null, { timeout: 30_000, ...poll });
+  await page.waitForFunction(() => window.dice?.room?.players?.length > 0, null, { timeout: 30_000, ...poll }).catch(async (e) => {
+    console.log(name, "never joined; status:", await page.textContent("#status"), "isHost:", await page.evaluate(() => window.dice?.room?.isHost));
+    throw e;
+  });
   return page;
 }
 
@@ -137,6 +140,7 @@ try {
   let phoneThrows = 0;
   async function play(tables, target) {
     for (let i = 0; i < 80 && phoneThrows < target; i++) {
+      await bob.waitForFunction(() => window.dice.room.game.phase === "awaitingThrow", null, { timeout: 15_000, ...poll });
       const g = await game(bob);
       const prev = g.history[0]?.rollId ?? null;
       const bobTurn = g.shooterId === bobId;
