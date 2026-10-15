@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ShakeTracker, SHAKE_TO_THROW, type MotionSample } from "../src/input/motion";
+import { MotionReader, ShakeTracker, SHAKE_TO_THROW, type MotionSample } from "../src/input/motion";
 import { normalizeThrow, MIN_SPEED } from "../src/input/throw";
 
 const HZ = 60;
@@ -75,6 +75,44 @@ describe("ShakeTracker", () => {
     feed(tr, 0, 1000, shake);
     const flick = feed(tr, 1000, 1600, (t) => (t < 1060 ? { ax: 30 } : t < 1110 ? { ax: -28 } : {}));
     expect(flick).toBeNull();
+  });
+});
+
+describe("MotionReader", () => {
+  type V = [number, number, number];
+  const ev = (acc: V, grav: V) =>
+    ({
+      acceleration: { x: acc[0], y: acc[1], z: acc[2] },
+      accelerationIncludingGravity: { x: acc[0] + grav[0], y: acc[1] + grav[1], z: acc[2] + grav[2] },
+      rotationRate: null,
+    }) as unknown as DeviceMotionEvent;
+
+  /** A phone held at a typical playing angle, per the spec: gravity reads up the screen and out of it. */
+  const held: V = [0, 6.9, 6.9];
+
+  it("passes spec-oriented readings through unchanged", () => {
+    const r = new MotionReader();
+    for (let i = 0; i < 20; i++) r.read(ev([0, 0, 0], held), i * 16);
+    expect(r.sign).toBe(1);
+    expect(r.read(ev([3, 0, -2], held), 400)).toMatchObject({ ax: 3, az: -2 });
+  });
+
+  it("flips every axis on a device that reports them inverted (iOS Safari)", () => {
+    const r = new MotionReader();
+    const inverted: V = [0, -6.9, -6.9];
+    for (let i = 0; i < 20; i++) r.read(ev([0, 0, 0], inverted), i * 16);
+    expect(r.sign).toBe(-1);
+    // A push to the right reads as −x there; after the flip it's +x like everywhere else.
+    expect(r.read(ev([-3, 0, 2], inverted), 400)).toMatchObject({ ax: 3, az: -2 });
+  });
+
+  it("uses screen orientation to find 'up', and keeps its last answer when gravity is ambiguous", () => {
+    const r = new MotionReader();
+    r.screenAngle = 90; // landscape: device +x is up the screen
+    for (let i = 0; i < 20; i++) r.read(ev([0, 0, 0], [-9.6, 0, -1]), i * 16);
+    expect(r.sign).toBe(-1);
+    for (let i = 0; i < 40; i++) r.read(ev([0, 0, 0], [0, 9.8, -9.8]), 400 + i * 16); // up + out cancel out
+    expect(r.sign).toBe(-1);
   });
 });
 

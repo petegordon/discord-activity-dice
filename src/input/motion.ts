@@ -140,25 +140,56 @@ export class ShakeTracker {
   }
 }
 
+/** How much of the gravity estimate is kept per sample when calibrating the sign. */
+const CALIBRATION_SMOOTHING = 0.9;
+/** Gravity along "up the screen + out of the screen" must be at least this clear (m/s²) to decide the sign. */
+const CALIBRATION_MIN = 5;
+
 /**
  * Converts a DeviceMotionEvent into a sample, high-pass filtering gravity out
  * when the browser only provides accelerationIncludingGravity.
+ *
+ * Some browsers (iOS Safari, at least historically) report every axis with
+ * the opposite sign from the spec, which flips left/right and forward/back.
+ * Rather than guess from the user agent, the reader calibrates itself:
+ * held the way you play, gravity per the spec reads up the screen (+y) and
+ * out of it (+z). If it reads the other way, every axis is negated.
  */
 export class MotionReader {
+  /** +1 for spec axes, −1 for inverted ones. Starts as the spec until gravity says otherwise. */
+  sign = 1;
+  /** screen.orientation.angle, kept current by the controller. */
+  screenAngle = 0;
   private gravity: [number, number, number] | null = null;
+  private calibration: [number, number, number] | null = null;
 
   read(e: DeviceMotionEvent, t: number): MotionSample | null {
     const r = e.rotationRate;
     const rot = r ? Math.hypot(r.alpha ?? 0, r.beta ?? 0, r.gamma ?? 0) : 0;
+    const g = e.accelerationIncludingGravity;
+    const hasG = !!g && g.x !== null && g.y !== null && g.z !== null;
+    if (hasG) this.calibrate([g.x!, g.y!, g.z!]);
+    const k = this.sign;
+
     const a = e.acceleration;
     if (a && a.x !== null && a.y !== null && a.z !== null) {
-      return { t, ax: a.x, ay: a.y, az: a.z, rot };
+      return { t, ax: k * a.x, ay: k * a.y, az: k * a.z, rot };
     }
-    const g = e.accelerationIncludingGravity;
-    if (!g || g.x === null || g.y === null || g.z === null) return null;
+    if (!hasG) return null;
     const alpha = 0.8;
-    const raw: [number, number, number] = [g.x, g.y, g.z];
+    const raw: [number, number, number] = [g!.x!, g!.y!, g!.z!];
     this.gravity = this.gravity ? (this.gravity.map((v, i) => alpha * v + (1 - alpha) * raw[i]) as [number, number, number]) : raw;
-    return { t, ax: raw[0] - this.gravity[0], ay: raw[1] - this.gravity[1], az: raw[2] - this.gravity[2], rot };
+    return { t, ax: k * (raw[0] - this.gravity[0]), ay: k * (raw[1] - this.gravity[1]), az: k * (raw[2] - this.gravity[2]), rot };
+  }
+
+  private calibrate(raw: [number, number, number]) {
+    const c = CALIBRATION_SMOOTHING;
+    this.calibration = this.calibration ? (this.calibration.map((v, i) => c * v + (1 - c) * raw[i]) as [number, number, number]) : raw;
+    const [gx, gy, gz] = this.calibration;
+    // "Up the screen" in device axes, using the same rotation as ShakeTracker.
+    const rad = (this.screenAngle * Math.PI) / 180;
+    const up = gx * Math.sin(rad) + gy * Math.cos(rad);
+    const s = up + gz;
+    if (Math.abs(s) >= CALIBRATION_MIN) this.sign = s > 0 ? 1 : -1;
   }
 }

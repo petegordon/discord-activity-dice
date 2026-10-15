@@ -101,13 +101,15 @@ export class ThrowController {
     // Desktop browsers expose DeviceMotionEvent but never fire it; real sensors report within ~1s.
     const timeout = setTimeout(() => this.motion !== "active" && this.setMotion("unavailable"), 1500);
     window.addEventListener("devicemotion", (e) => {
+      const angle = screen.orientation?.angle ?? 0;
+      this.reader.screenAngle = angle;
       const sample = this.reader.read(e, performance.now());
       if (!sample) return;
       if (this.motion !== "active") {
         clearTimeout(timeout);
         this.setMotion("active");
       }
-      this.tracker.screenAngle = screen.orientation?.angle ?? 0;
+      this.tracker.screenAngle = angle;
       if (this.holding && this.tracker.push(sample)) this.throwNow(this.tracker.throwInput());
     });
   }
