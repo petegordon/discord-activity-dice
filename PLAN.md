@@ -353,7 +353,7 @@ discord-activity-dice/
 | M0 | ✅ Live at https://dice.housetandem.com (Worker custom domain), also at https://discord-activity-dice.pete-872.workers.dev |
 | M1 | 🟡 Shake-and-throw confirmed working on two real phones in the standalone site (2026-10-14). Still open: whether Discord lets an Activity read motion sensors |
 | M2–M6 | ✅ Built. Unit-tested, plus a headless multi-player e2e (`scripts/e2e.mjs`) on both transports, locally and in production |
-| M7 | 🟡 Code complete (SDK auth, `/api/token`, `/.proxy` paths, `instanceId` rooms). Needs a Discord application ID and secret |
+| M7 | ✅ Live in Discord: app `Dice` (ID 1560074262008700930) installed on the GDG Columbus server and launched successfully (2026-10-14) |
 | M8 | ✅ Host migration, relay transport, stale-host eviction, reconnect grace, optional TURN. 🟡 Mobile performance tuning on real devices |
 
 Known limitation: if a PeerJS host leaves just as it broadcasts a roll, a player who missed that message may take over from slightly older state, and that roll is lost.

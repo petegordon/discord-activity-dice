@@ -83,7 +83,7 @@ npx wrangler secret put TURN_KEY_API_TOKEN
    | `/` | `dice.housetandem.com` |
    | `/peerjs` | `0.peerjs.com` (only needed if you force `t=peerjs`) |
 
-4. Under **OAuth2**, add the redirect `https://127.0.0.1` (the Embedded App SDK requires one, but it isn't used).
+4. Under **OAuth2 → Redirects**, add **exactly one** redirect, e.g. `https://127.0.0.1`. The SDK never visits it, but Discord fails with `Missing "redirect_uri"` if there are none or more than one.
 5. Put the public application ID (this project: `1560074262008700930`) in two places:
    - `wrangler.jsonc` → `vars.DISCORD_CLIENT_ID`
    - `.env.production` → `VITE_DISCORD_CLIENT_ID=<id>` (read at build time; committed, as it holds no secrets)
@@ -91,7 +91,8 @@ npx wrangler secret put TURN_KEY_API_TOKEN
 7. In the developer portal's **General Information**, set:
    - **Terms of Service URL:** https://dice.housetandem.com/terms
    - **Privacy Policy URL:** https://dice.housetandem.com/privacy
-8. Launch the Activity from a voice channel. Everyone in the same Activity instance joins the same table automatically.
+8. Under **Installation**, enable **Guild Install** with the `applications.commands` scope, and under **Activities → Settings → Supported Platforms** tick iOS and Android. Then open the install link to add the app to a server.
+9. Launch the Activity from a voice channel. Everyone in the same Activity instance joins the same table automatically.
 
 ## Project layout
 
