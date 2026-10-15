@@ -76,7 +76,11 @@ async function exchangeToken(req: Request, env: Env): Promise<Response> {
       code,
     }),
   });
-  if (!res.ok) return json({ error: "token exchange failed" }, 502);
+  if (!res.ok) {
+    // Discord's OAuth error code (e.g. invalid_grant, invalid_client) isn't sensitive and makes setup problems diagnosable.
+    const detail = ((await res.json().catch(() => ({}))) as { error?: unknown }).error;
+    return json({ error: "token exchange failed", discord: typeof detail === "string" ? detail : res.status }, 502);
+  }
   const { access_token } = (await res.json()) as { access_token?: string };
   return access_token ? json({ access_token }) : json({ error: "token exchange failed" }, 502);
 }
