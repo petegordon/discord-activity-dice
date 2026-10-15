@@ -1,7 +1,8 @@
 import type { ThrowInput } from "../net/protocol";
 import { motionEnv, motionVerdict } from "../platform/capabilities";
 import { inDiscord } from "../platform/env";
-import { MotionReader, SHAKE_TO_THROW, ShakeTracker } from "./motion";
+import { loadProfile } from "./calibration";
+import { MotionReader, SHAKE_TO_THROW, ShakeTracker, type MotionSample, type ThrowProfile } from "./motion";
 import { normalizeThrow } from "./throw";
 
 /** "blocked": the browser forbids motion in this frame (Discord); "unavailable": no sensors or permission. */
@@ -42,6 +43,8 @@ export class ThrowController {
   private tick: ReturnType<typeof setInterval> | undefined;
   private lastBuzz = 0;
   private listening = false;
+  /** Sees every motion sample, held or not (used by calibration). */
+  sampleListener: ((sample: MotionSample, screenAngle: number) => void) | null = null;
 
   constructor(
     private readonly zone: HTMLElement,
@@ -53,9 +56,19 @@ export class ThrowController {
     zone.addEventListener("pointercancel", () => this.endHold());
     zone.addEventListener("contextmenu", (e) => e.preventDefault());
 
+    this.tracker.profile = loadProfile();
     const verdict = motionVerdict(motionEnv(inDiscord));
     if (verdict === "probe") this.listen();
     else this.setMotion(verdict);
+  }
+
+  get profile() {
+    return this.tracker.profile;
+  }
+
+  /** Apply a calibrated throw (or null for the defaults). */
+  setProfile(profile: ThrowProfile | null) {
+    this.tracker.profile = profile;
   }
 
   /** No motion here, and none coming: blocked, missing, or denied. */
@@ -110,6 +123,7 @@ export class ThrowController {
         this.setMotion("active");
       }
       this.tracker.screenAngle = angle;
+      this.sampleListener?.(sample, angle);
       if (this.holding && this.tracker.push(sample)) this.throwNow(this.tracker.throwInput());
     });
   }

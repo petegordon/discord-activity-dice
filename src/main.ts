@@ -4,6 +4,7 @@ import { DiceAudio } from "./audio";
 import { planRoll } from "./dice/plan";
 import { preparePlayback } from "./dice/roller";
 import { createGame, type GameState } from "./game/sevenElevenDoubles";
+import { CalibrationSheet } from "./input/calibrateUI";
 import { ThrowController } from "./input/controller";
 import { buttonThrow } from "./input/throw";
 import { PeerJsTransport } from "./net/peerjs";
@@ -34,6 +35,7 @@ async function boot() {
   let roomId = "";
   let room: Room | null = null;
   let controller: ThrowController | null = null;
+  let calibration: CalibrationSheet | null = null;
   let discord: DiscordSession | null = null;
   /** Our shaker remote's identity, once the 📱 sheet has been opened. */
   let remote: { id: string; key: string; sentAt: number } | null = null;
@@ -60,6 +62,7 @@ async function boot() {
       },
       copyInvite: () => navigator.clipboard.writeText(inviteLink(roomId, transportKind)),
       openRemote: () => void openRemote(false),
+      calibrate: () => calibration?.open(),
       remoteNewLink: () => void openRemote(true),
       remoteUnpair: () => {
         room?.unpair();
@@ -171,6 +174,7 @@ async function boot() {
     const phoneIsCup = !!controller?.motionOff || remoteOnline();
     controller?.setEnabled(mine && !phoneIsCup);
     ui.showLobbyPhone(!!controller?.motionOff && !remoteOnline());
+    ui.showCalibrate(controller?.motion === "active" || controller?.motion === "needs-permission");
     if (shown.phase !== "awaitingThrow") ui.setZone("hidden");
     else if (rolling || awaitingAck !== undefined) ui.setZone("rolling");
     else if (cooling) ui.setZone("settling", { shooterName: shooter?.id === self.id ? undefined : shooter?.name });
@@ -211,6 +215,7 @@ async function boot() {
     },
     onMotionState: () => refresh(),
   });
+  calibration = new CalibrationSheet(controller, (message) => ui.hint(message));
 
   r.on("state", (p, game) => {
     players = p;

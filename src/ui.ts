@@ -30,6 +30,8 @@ export type UIHandlers = {
   copyInvite: () => Promise<void>;
   /** Open the shaker-remote sheet (📱). */
   openRemote: () => void;
+  /** Open the throw calibration (🎯). */
+  calibrate: () => void;
   remoteOpenHere: () => void;
   remoteNewLink: () => void;
   remoteUnpair: () => void;
@@ -93,6 +95,7 @@ export class UI {
       setTimeout(() => (btn.textContent = "Copy invite"), 1600);
     });
     $("remote-btn").addEventListener("click", () => handlers.openRemote());
+    $("calibrate-btn").addEventListener("click", () => handlers.calibrate());
     $("use-phone").addEventListener("click", () => handlers.openRemote());
     $("lobby-phone").addEventListener("click", () => handlers.openRemote());
     $("pair-open").addEventListener("click", () => handlers.remoteOpenHere());
@@ -257,6 +260,11 @@ export class UI {
 
   showRemoteButton(show: boolean) {
     $("remote-btn").hidden = !show;
+  }
+
+  /** 🎯 only where this device's motion works (or can after a tap). */
+  showCalibrate(show: boolean) {
+    $("calibrate-btn").hidden = !show;
   }
 
   /** Offer pairing up front in the lobby where there's no motion. */

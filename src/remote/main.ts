@@ -1,5 +1,6 @@
 import "./remote.css";
 import { createGame, type GameState } from "../game/sevenElevenDoubles";
+import { CalibrationSheet } from "../input/calibrateUI";
 import { ThrowController } from "../input/controller";
 import { playerIdFromKey } from "../net/identityKey";
 import { PeerJsTransport } from "../net/peerjs";
@@ -97,6 +98,8 @@ function boot() {
     onHoldChange: (holding) => zone.classList.toggle("holding", holding),
     onMotionState: () => render(),
   });
+  const calibration = new CalibrationSheet(controller, hint);
+  $("r-cal").addEventListener("click", () => calibration.open());
 
   function renderMe(p: Player | undefined) {
     const box = $("r-me");
@@ -151,6 +154,7 @@ function boot() {
       $("r-message").hidden = true;
     }
 
+    $("r-cal").hidden = !(controller?.motion === "active" || controller?.motion === "needs-permission");
     const turn = myTurn();
     controller?.setEnabled(turn);
     if (turn && !wasMyTurn && "vibrate" in navigator) navigator.vibrate([40, 60, 40]);

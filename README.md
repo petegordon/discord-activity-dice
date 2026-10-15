@@ -39,6 +39,18 @@ Notes:
 
 The full design is in [SHAKER-REMOTE.md](SHAKER-REMOTE.md).
 
+## 🎯 Throw calibration (optional)
+
+Anywhere motion works (a phone playing directly, or the phone remote), tap **🎯** to teach the game your style: one quick shake, then three throws straight at the table.
+
+- **Direction:** whatever way you threw becomes straight ahead. Push the phone away, flick it up the screen, or anything in between; left and right are measured from that direction.
+- **Strength:** a flick as gentle as your practice throws counts, and your usual throw reads as a strong throw.
+- **Shaking:** your normal shaking reads as full shaking.
+- If one practice throw goes a clearly different way, you're asked to redo it.
+- It's saved in that phone's browser. **Reset to default** undoes it.
+
+It only changes how the dice tumble. Results are still picked at random by the host.
+
 ## Playing on phones
 
 DeviceMotion, WebCrypto and WebRTC all need **HTTPS**, so test on phones with the deployed site (or an HTTPS tunnel), not `http://<lan-ip>:5173`.

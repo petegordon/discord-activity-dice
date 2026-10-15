@@ -1,0 +1,124 @@
+/* The "Calibrate your throw" sheet (calibrateUI.ts). Uses each page's color tokens. */
+
+.cal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(5, 10, 7, 0.85);
+}
+
+.cal-layer[hidden] {
+  display: none;
+}
+
+.cal-card {
+  width: min(380px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+  color: var(--text);
+}
+
+.cal-title {
+  margin: 0;
+  font-size: 22px;
+}
+
+.cal-text {
+  margin: 0;
+  color: var(--muted);
+}
+
+.cal-meter {
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.cal-fill {
+  height: 100%;
+  width: 0;
+  background: var(--gold);
+  transition: width 0.1s linear;
+}
+
+.cal-pad {
+  min-height: 180px;
+  border-radius: 22px;
+  border: 2px solid var(--gold);
+  background: rgba(255, 255, 255, 0.06);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  font-weight: 800;
+  font-size: 18px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.cal-pad.holding {
+  background: color-mix(in srgb, var(--gold) 28%, var(--panel-solid));
+  transform: scale(0.985);
+}
+
+.cal-dots {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.cal-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+}
+
+.cal-dot.done {
+  background: var(--gold);
+}
+
+.cal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.cal-btn {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 18px;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cal-btn.primary {
+  background: var(--gold);
+  color: #1d1606;
+}
+
+.cal-btn.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
+}
+
+.cal-btn:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}

@@ -12,24 +12,75 @@ export type MotionSample = {
   rot: number;
 };
 
-const NOISE_FLOOR = 1.5; // m/s²; hand tremor and sensor noise
-const ENERGY_SCALE = 18; // m/s² of sustained shaking that reads as full energy
+export const NOISE_FLOOR = 1.5; // m/s²; hand tremor and sensor noise
+export const ENERGY_SCALE = 18; // m/s² of sustained shaking that reads as full energy
 const ENERGY_RISE = 0.25;
 const ENERGY_FALL = 0.06;
 const WINDOW_MS = 320;
-const FLICK_PEAK = 22; // m/s²; harder than typical shaking
+export const FLICK_PEAK = 22; // m/s²; harder than typical shaking
 const FLICK_QUIET = 4; // m/s²
 const FLICK_QUIET_MS = 110;
 const FLICK_MAX_GAP_MS = 260;
 /** Release velocity (m/s) that reads as a full-speed throw. */
-const FULL_SPEED = 2.2;
+export const FULL_SPEED = 2.2;
 const FULL_SPIN = 900; // deg/s
 /** A flick must have moved the phone forward at least this fast (m/s), more forward than sideways. */
-const FLICK_MIN_FORWARD = 0.5;
+export const FLICK_MIN_FORWARD = 0.5;
 /** Shaking at least this much during a hold makes a release count as a throw. */
 export const SHAKE_TO_THROW = 0.12;
 
-const mag = (s: MotionSample) => Math.hypot(s.ax, s.ay, s.az);
+export const mag = (s: MotionSample) => Math.hypot(s.ax, s.ay, s.az);
+
+export type Vec3 = [number, number, number];
+
+/**
+ * A player's own throw, learned by calibration (see calibration.ts). Directions
+ * are in screen space: x to the right of the screen, y up it, z out of it.
+ */
+export type ThrowProfile = {
+  v: 1;
+  /** Unit vector: the way this player throws "straight at the table". */
+  forward: Vec3;
+  /** Typical peak acceleration of their flick, m/s². */
+  flickPeak: number;
+  /** Typical peak speed of their throw along `forward`, m/s. */
+  throwSpeed: number;
+  /** Typical shaking acceleration above the noise floor, m/s². */
+  shakeLevel: number;
+};
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/**
+ * Device axes to screen axes. The screen is rotated counter-clockwise by
+ * `screenAngle` (screen.orientation.angle) relative to the device.
+ */
+export function toScreen([vx, vy, vz]: Vec3, screenAngle: number): Vec3 {
+  const rad = (screenAngle * Math.PI) / 180;
+  return [vx * Math.cos(rad) - vy * Math.sin(rad), vx * Math.sin(rad) + vy * Math.cos(rad), vz];
+}
+
+/** Peak velocity reached over `samples`, integrated from rest (device axes, m/s). */
+export function peakVelocity(samples: readonly MotionSample[]): Vec3 {
+  let vx = 0, vy = 0, vz = 0;
+  let best: Vec3 = [0, 0, 0];
+  let bestMag = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    const dt = Math.min(0.05, Math.max(0, (b.t - a.t) / 1000));
+    vx += ((a.ax + b.ax) / 2) * dt;
+    vy += ((a.ay + b.ay) / 2) * dt;
+    vz += ((a.az + b.az) / 2) * dt;
+    const m = Math.hypot(vx, vy, vz);
+    if (m > bestMag) {
+      bestMag = m;
+      best = [vx, vy, vz];
+    }
+  }
+  return best;
+}
 
 /**
  * Turns raw motion into shake energy (for rattling and broadcasting) and
@@ -40,6 +91,8 @@ const mag = (s: MotionSample) => Math.hypot(s.ax, s.ay, s.az);
 export class ShakeTracker {
   /** 0..1, smoothed. */
   energy = 0;
+  /** The player's calibrated throw, or null for the defaults. */
+  profile: ThrowProfile | null = null;
   /** Highest energy seen during the current hold. */
   peakEnergy = 0;
   private window: MotionSample[] = [];
@@ -60,11 +113,11 @@ export class ShakeTracker {
     while (this.window.length && s.t - this.window[0].t > WINDOW_MS) this.window.shift();
 
     const m = mag(s);
-    const level = Math.min(1, Math.max(0, m - NOISE_FLOOR) / ENERGY_SCALE);
+    const level = Math.min(1, Math.max(0, m - NOISE_FLOOR) / this.energyScale);
     this.energy += (level - this.energy) * (level > this.energy ? ENERGY_RISE : ENERGY_FALL);
     this.peakEnergy = Math.max(this.peakEnergy, this.energy);
 
-    if (m >= FLICK_PEAK) {
+    if (m >= this.flickPeak) {
       this.spikeAt = s.t;
       this.quietSince = -Infinity;
       return false;
@@ -79,7 +132,7 @@ export class ShakeTracker {
       this.spikeAt = -Infinity;
       // A hard final shake stroke then holding still looks the same; only a forward motion counts.
       const { forward, sideways } = this.tableVelocity();
-      return forward >= FLICK_MIN_FORWARD && forward > Math.abs(sideways);
+      return forward >= this.minForward && forward > Math.abs(sideways);
     }
     return false;
   }
@@ -92,33 +145,40 @@ export class ShakeTracker {
    * (the screen is rotated counter-clockwise by screenAngle relative to the
    * device), then pushing away (−Z) or up the screen (+Y) is forward.
    */
+  /**
+   * Peak velocity in table terms. Without a profile, pushing the phone away
+   * (−Z) or up the screen (+Y) is forward. With one, forward is the way this
+   * player threw during calibration, and sideways is the screen's left/right
+   * with that direction taken out.
+   */
   private tableVelocity(screenAngle = this.screenAngle) {
-    const [vx, vy, vz] = this.peakVelocity();
-    const rad = (screenAngle * Math.PI) / 180;
-    const sx = vx * Math.cos(rad) - vy * Math.sin(rad);
-    const sy = vx * Math.sin(rad) + vy * Math.cos(rad);
-    return { forward: Math.max(0, -vz) + Math.max(0, sy) * 0.6, sideways: sx };
+    const v = toScreen(peakVelocity(this.window), screenAngle);
+    const f = this.profile?.forward;
+    if (!f) return { forward: Math.max(0, -v[2]) + Math.max(0, v[1]) * 0.6, sideways: v[0] };
+    const right: Vec3 = [1 - f[0] * f[0], -f[0] * f[1], -f[0] * f[2]];
+    const len = Math.hypot(...right);
+    // A "straight" throw along the screen's own left/right leaves no sideways axis; fall back to the screen's.
+    const r: Vec3 = len > 0.3 ? [right[0] / len, right[1] / len, right[2] / len] : [1, 0, 0];
+    return { forward: Math.max(0, dot(v, f)), sideways: dot(v, r) };
   }
 
-  /** Peak velocity reached within the recent window, integrated from rest. */
-  private peakVelocity(): [number, number, number] {
-    let vx = 0, vy = 0, vz = 0;
-    let best: [number, number, number] = [0, 0, 0];
-    let bestMag = 0;
-    for (let i = 1; i < this.window.length; i++) {
-      const a = this.window[i - 1];
-      const b = this.window[i];
-      const dt = Math.min(0.05, Math.max(0, (b.t - a.t) / 1000));
-      vx += ((a.ax + b.ax) / 2) * dt;
-      vy += ((a.ay + b.ay) / 2) * dt;
-      vz += ((a.az + b.az) / 2) * dt;
-      const m = Math.hypot(vx, vy, vz);
-      if (m > bestMag) {
-        bestMag = m;
-        best = [vx, vy, vz];
-      }
-    }
-    return best;
+  /** Spike that starts a flick: 60% of the player's own flick, never above the default. */
+  private get flickPeak() {
+    return this.profile ? clamp(this.profile.flickPeak * 0.6, 8, FLICK_PEAK) : FLICK_PEAK;
+  }
+
+  /** Their usual throw reads as about 85% speed. */
+  private get fullSpeed() {
+    return this.profile ? clamp(this.profile.throwSpeed / 0.85, 0.6, FULL_SPEED) : FULL_SPEED;
+  }
+
+  private get minForward() {
+    return this.profile ? clamp(this.profile.throwSpeed * 0.4, 0.2, FLICK_MIN_FORWARD) : FLICK_MIN_FORWARD;
+  }
+
+  /** Their usual shaking reads as nearly full energy. */
+  private get energyScale() {
+    return this.profile ? clamp(this.profile.shakeLevel * 1.1, 5, ENERGY_SCALE) : ENERGY_SCALE;
   }
 
   /**
@@ -128,7 +188,7 @@ export class ShakeTracker {
    */
   throwInput(screenAngle = this.screenAngle): ThrowInput {
     const { forward, sideways } = this.tableVelocity(screenAngle);
-    const speedRaw = Math.hypot(forward, sideways) / FULL_SPEED;
+    const speedRaw = Math.hypot(forward, sideways) / this.fullSpeed;
     const rot = this.window.reduce((m, s) => Math.max(m, s.rot), 0);
     const spin = rot > 0 ? rot / FULL_SPIN : this.peakEnergy;
     return normalizeThrow({

@@ -133,6 +133,40 @@ try {
   await bob.waitForSelector("#pair", { state: "hidden", timeout: 5_000 });
   if (remote.url().includes("#")) fail("remote kept the key in the address bar");
 
+  // Optional throw calibration on the phone: one shake, three gentle throws straight ahead.
+  await remote.waitForSelector("#r-cal:not([hidden])", { timeout: 10_000 });
+  await remote.click("#r-cal");
+  await remote.click(".cal-layer .cal-btn.primary"); // Start
+  await remote.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = 0; i < 140 && document.querySelector(".cal-pad")?.hidden; i++) {
+      window.__motion = { x: i % 2 ? 7 : -7, y: 0, z: 0, rot: 200 };
+      await sleep(20);
+    }
+    window.__motion = { x: 0, y: 0, z: 0, rot: 0 };
+  });
+  for (let i = 0; i < 3; i++) {
+    const pad = await remote.locator(".cal-pad").boundingBox();
+    await remote.mouse.move(pad.x + pad.width / 2, pad.y + pad.height / 2);
+    await remote.mouse.down();
+    await remote.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      window.__motion = { x: 0, y: 0, z: -11, rot: 0 };
+      await sleep(100);
+      window.__motion = { x: 0, y: 0, z: 11, rot: 0 };
+      await sleep(100);
+      window.__motion = { x: 0, y: 0, z: 0, rot: 0 };
+      await sleep(80);
+    });
+    await remote.mouse.up();
+    await remote.waitForTimeout(150);
+  }
+  await remote.waitForFunction(() => document.querySelector(".cal-title")?.textContent?.includes("Calibrated"), null, { timeout: 5_000, ...poll });
+  const profile = await remote.evaluate(() => JSON.parse(localStorage.getItem("dice.throwProfile")));
+  console.log("calibrated:", JSON.stringify({ forward: profile.forward.map((x) => +x.toFixed(2)), flickPeak: +profile.flickPeak.toFixed(1), throwSpeed: +profile.throwSpeed.toFixed(2) }));
+  await remote.screenshot({ path: `${outDir}/remote-${transport}-calibrated.png` });
+  await remote.click(".cal-layer .cal-btn.primary"); // Done
+
   await alice.selectOption("#target", "21");
   await alice.click("#start");
 
