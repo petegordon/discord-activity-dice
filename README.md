@@ -87,6 +87,12 @@ This tests the shaker remote:
 - The host leaves mid-game and the phone keeps working with the new host.
 - **New link** locks out the old phone.
 
+```bash
+node scripts/e2e-deploy.mjs http://127.0.0.1:8787
+```
+
+This checks that a page caught mid-deploy recovers. For a few seconds after `npm run deploy`, a page can arrive before its script has spread across Cloudflare. `public/boot-guard.js` then shows "Loading the latest version…" and reloads, waiting 1, 2 and 4 seconds. After three tries it offers a Reload button. The test fakes failed script loads to exercise this, and checks that a missing file returns a 404 instead of the game page.
+
 Add `&nomotion` to any table URL to see the no-motion (Discord or desktop) layout on a phone.
 
 ### Choosing a transport

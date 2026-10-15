@@ -266,6 +266,7 @@ async function boot() {
   r.on("status", (s) => ui.status(s, transportKind === "peerjs" && s.kind === "failed" ? inviteLink(roomId, "relay") : undefined));
 
   if (debug) Object.assign(window, { dice: { room: r, scene, self } });
+  (window as { __diceLoaded?: () => void }).__diceLoaded?.(); // see public/boot-guard.js
   addEventListener("pagehide", () => r.leave());
 
   try {

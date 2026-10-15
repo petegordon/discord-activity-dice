@@ -5,7 +5,11 @@
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application",
+    // The Worker passes anything that isn't /api/* on to the static files (env.ASSETS in worker/src/index.ts).
+    "binding": "ASSETS",
+    // A missing file is a 404, never the game page: during a deploy, a script that hasn't arrived
+    // yet must fail as a script so public/boot-guard.js can reload the page.
+    "not_found_handling": "none",
     "run_worker_first": ["/api/*"]
   },
   "durable_objects": {

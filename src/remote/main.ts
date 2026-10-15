@@ -289,6 +289,7 @@ function boot() {
     }
   }
 
+  (window as { __diceLoaded?: () => void }).__diceLoaded?.(); // see public/boot-guard.js
   $("r-connect").addEventListener("click", () => {
     // iOS only grants motion from inside a tap, so ask before anything async.
     if (controller?.motion === "needs-permission") void controller.requestMotionPermission();
