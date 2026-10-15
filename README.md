@@ -17,6 +17,12 @@ To launch the Discord Activity, the app must be installed in the server you're i
 
 Built with Three.js, cannon-es, the DeviceMotion API, PeerJS (WebRTC) and a Cloudflare Worker with a Durable Object relay. See [PLAN.md](PLAN.md) for the full design.
 
+## Demo reel
+
+[![Demo reel: three friends roll the dice on their phones, then a phone throws for a laptop table](public/screenshots/demo-reel.jpg)](https://dice.housetandem.com/screenshots/demo-reel.mp4)
+
+Watch the [demo reel](https://dice.housetandem.com/screenshots/demo-reel.mp4) (46 s, 1920×1080), or the [vertical cut](https://dice.housetandem.com/screenshots/demo-reel-vertical.mp4) (1080×1920) for TikTok, Reels and Shorts. Both are also in the [gallery](https://dice.housetandem.com/screenshots/).
+
 ## Screenshots
 
 | Hold & shake | Seven | Doubles | Winner |
@@ -24,6 +30,8 @@ Built with Three.js, cannon-es, the DeviceMotion API, PeerJS (WebRTC) and a Clou
 | ![Holding the cup to shake the dice](public/screenshots/shaking.png) | ![SEVEN! +1, roll again](public/screenshots/seven.png) | ![Doubles, +2, roll again](public/screenshots/doubles.png) | ![You win! with final scores](public/screenshots/win.png) |
 
 More in the [gallery](https://dice.housetandem.com/screenshots/). To regenerate them, run `node scripts/screenshots.mjs`. It plays real games on the live site (no rigged dice) and captures each outcome as it happens.
+
+For a ~45 s demo reel video, run `node scripts/demo-reel.mjs`. It plays real games the same way, records each screen (three phones, then a laptop table with a phone as the dice cup), and cuts the footage with ffmpeg into `scripts/out/reel/demo-reel.mp4` (1920×1080) and `demo-reel-vertical.mp4` (1080×1920). Add `--compose` to re-cut the last recording without playing again. To publish a new cut, copy both videos and their `.jpg` posters into `public/screenshots/`.
 
 ## How to play
 

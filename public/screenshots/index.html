@@ -8,6 +8,10 @@
     <meta property="og:title" content="7, 11, Doubles" />
     <meta property="og:description" content="Shake your phone and throw 3D dice with friends, on the web or in Discord." />
     <meta property="og:image" content="https://dice.housetandem.com/screenshots/desktop.png" />
+    <meta property="og:video" content="https://dice.housetandem.com/screenshots/demo-reel.mp4" />
+    <meta property="og:video:type" content="video/mp4" />
+    <meta property="og:video:width" content="1920" />
+    <meta property="og:video:height" content="1080" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/legal.css" />
@@ -46,6 +50,29 @@
         color: #1d1606;
         font-weight: 700;
         text-decoration: none;
+      }
+      .reels {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 20px;
+        align-items: start;
+        margin: 24px 0 8px;
+      }
+      .reels video {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: #000;
+      }
+      @media (max-width: 720px) {
+        .reels {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .reels .tall {
+          max-width: 300px;
+        }
       }
       .hero {
         margin: 24px 0 8px;
@@ -94,6 +121,21 @@
           <a class="cta plain" href="https://discord.com/oauth2/authorize?client_id=1560074262008700930" rel="noopener">Add to your Discord server</a>
         </div>
       </header>
+
+      <section class="reels" aria-label="Demo reel">
+        <figure>
+          <video controls playsinline preload="metadata" poster="demo-reel.jpg" width="1920" height="1080">
+            <source src="demo-reel.mp4" type="video/mp4" />
+          </video>
+          <figcaption><b>Demo reel:</b> real games, real rolls. Three friends on their phones, then a laptop table with a phone as the dice cup. <a href="demo-reel.mp4" download>Download (1920×1080)</a></figcaption>
+        </figure>
+        <figure class="tall">
+          <video controls playsinline preload="metadata" poster="demo-reel-vertical.jpg" width="1080" height="1920">
+            <source src="demo-reel-vertical.mp4" type="video/mp4" />
+          </video>
+          <figcaption><b>Vertical:</b> for TikTok, Reels and Shorts. <a href="demo-reel-vertical.mp4" download>Download (1080×1920)</a></figcaption>
+        </figure>
+      </section>
 
       <figure class="hero">
         <img src="desktop.png" width="1280" height="800" alt="Desktop view: the dice have landed on a scoring roll and the callout says roll again" />
