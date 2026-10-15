@@ -86,12 +86,24 @@ export class UI {
         "submit",
         (e) => {
           e.preventDefault();
-          layer.hidden = true;
-          resolve(input.value.trim() || "Player");
+          const name = input.value.trim() || "Player";
+          this.removeNamePrompt();
+          resolve(name);
         },
         { once: true },
       );
     });
+  }
+
+  /**
+   * Take the name field out of the page for good. iOS "Shake to Undo" offers
+   * to undo typing in any text field still in the document, which pops up
+   * every time a player shakes the dice.
+   */
+  removeNamePrompt() {
+    const input = document.getElementById("name-input");
+    if (input === document.activeElement) (input as HTMLInputElement).blur();
+    document.getElementById("name-prompt")?.remove();
   }
 
   setRoom(code: string, showInvite: boolean) {

@@ -96,6 +96,7 @@ async function boot() {
     storeName(name);
     self = { ...(await newIdentity()), name };
   }
+  ui.removeNamePrompt(); // no-op if already gone; see removeNamePrompt
   ui.setRoom(roomId, !inDiscord);
   // Discord lists the Terms and Privacy links on the app's own page; plain links can't leave the Activity frame.
   document.getElementById("legal-links")!.hidden = inDiscord;
