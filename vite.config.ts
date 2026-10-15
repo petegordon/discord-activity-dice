@@ -11,5 +11,7 @@ export default defineConfig({
   build: {
     target: "es2022",
     chunkSizeWarningLimit: 1500,
+    // The table, and the phone-only shaker remote (SHAKER-REMOTE.md), served at /remote.
+    rollupOptions: { input: { main: "index.html", remote: "remote.html" } },
   },
 });

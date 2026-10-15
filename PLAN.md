@@ -343,6 +343,7 @@ discord-activity-dice/
 | **M6** | 7, 11, Doubles game | Reducer, turn order, lobby, scoring, callouts |
 | **M7** | Discord Activity | Developer Portal app, `/api/token`, SDK auth, URL mappings, `instanceId` rooms |
 | **M8** | Resilience & polish | Host migration, Durable Object relay fallback, TURN, mobile perf tuning |
+| **M9** | Shaker remote | Phone browser as a motion controller for a seat in Discord or on a no-motion device. See [SHAKER-REMOTE.md](SHAKER-REMOTE.md) |
 
 ---
 
@@ -351,10 +352,11 @@ discord-activity-dice/
 | # | Status |
 |---|---|
 | M0 | ✅ Live at https://dice.housetandem.com (Worker custom domain), also at https://discord-activity-dice.pete-872.workers.dev |
-| M1 | 🟡 Shake-and-throw confirmed working on two real phones in the standalone site (2026-10-14). Still open: whether Discord lets an Activity read motion sensors |
+| M1 | 🟡 Shake-and-throw confirmed working on two real phones in the standalone site (2026-10-14). Inside Discord, motion is blocked: the Activity iframe isn't delegated the `accelerometer`/`gyroscope` Permissions Policy features. Addressed by M9 |
 | M2–M6 | ✅ Built. Unit-tested, plus a headless multi-player e2e (`scripts/e2e.mjs`) on both transports, locally and in production |
 | M7 | ✅ Live in Discord: app `Dice` (ID 1560074262008700930) installed on the GDG Columbus server and launched successfully (2026-10-14) |
 | M8 | ✅ Host migration, relay transport, stale-host eviction, reconnect grace, optional TURN. 🟡 Mobile performance tuning on real devices |
+| M9 | ✅ Shaker remote built (2026-10-15): motion detection, pairing with QR code and link, the `/remote` phone page, relay and PeerJS remote roles, Discord room tickets. Unit tests, plus `scripts/e2e-remote.mjs` passing on both transports. See [SHAKER-REMOTE.md](SHAKER-REMOTE.md) |
 
 Known limitation: if a PeerJS host leaves just as it broadcasts a roll, a player who missed that message may take over from slightly older state, and that roll is lost.
 

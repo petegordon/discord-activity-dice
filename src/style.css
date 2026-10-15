@@ -63,6 +63,8 @@ input {
 
 .topbar {
   position: absolute;
+  /* Above the lobby and match-over cards, so 📱 and mute stay reachable. */
+  z-index: 2;
   top: calc(var(--safe-top) + 10px);
   left: 12px;
   right: 12px;
@@ -107,6 +109,11 @@ input {
   border-radius: 999px;
   padding: 4px 10px;
   cursor: pointer;
+}
+
+.top-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .icon-btn {
@@ -173,6 +180,17 @@ input {
   color: var(--gold);
   min-width: 1.2em;
   text-align: right;
+}
+
+.player .remote-badge {
+  font-size: 13px;
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.player .remote-badge.online {
+  opacity: 1;
+  filter: none;
 }
 
 .player .tag {
@@ -352,6 +370,12 @@ input {
   cursor: grabbing;
   background: color-mix(in srgb, var(--pc, var(--gold)) 30%, var(--panel-solid));
   transform: scale(0.985);
+}
+
+/* Your turn, but the phone is the cup: nothing to grab here. */
+.zone.remote {
+  cursor: default;
+  min-height: 84px;
 }
 
 .zone.waiting {
@@ -534,6 +558,71 @@ input:focus-visible {
 .trophy {
   font-size: 56px;
   text-align: center;
+}
+
+/* ---------- shaker remote pairing ---------- */
+
+#pair {
+  z-index: 3;
+}
+
+.pair-card {
+  align-items: center;
+  text-align: center;
+}
+
+.pair-card h1 {
+  font-size: 22px;
+}
+
+.qr {
+  width: min(240px, 70vw);
+  aspect-ratio: 1;
+  padding: 10px;
+  background: #fff;
+  border-radius: 14px;
+}
+
+.qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pair-link {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+.pair-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pair-status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.pair-status.ok {
+  color: var(--hit);
+  font-weight: 700;
+}
+
+.pair-warn {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gold);
 }
 
 /* ---------- status ---------- */

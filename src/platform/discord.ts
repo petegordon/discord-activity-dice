@@ -3,7 +3,13 @@ import { apiBase, DISCORD_CLIENT_ID, peerServer } from "./env";
 import { newIdentity } from "../net/identityKey";
 import { sanitizeRoom } from "./identity";
 
-export type DiscordSession = { self: Self; roomId: string };
+export type DiscordSession = {
+  self: Self;
+  roomId: string;
+  /** Opens a URL in the system browser, after Discord's own confirmation. */
+  openExternal: (url: string) => Promise<void>;
+  mobile: boolean;
+};
 
 /**
  * Embedded App SDK handshake: ready → authorize → token exchange on our
@@ -28,13 +34,16 @@ export async function startDiscord(): Promise<DiscordSession> {
     scope: ["identify"],
   });
 
+  // A fresh id per session, so the same user on two devices doesn't collide.
+  const identity = await newIdentity();
   const res = await fetch(`${apiBase}/token`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, instanceId: sdk.instanceId, playerId: identity.id }),
   });
   if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-  const { access_token } = (await res.json()) as { access_token: string };
+  // `room` and `ticket` admit us to this instance's relay room (worker/src/roomTicket.ts).
+  const { access_token, room, ticket } = (await res.json()) as { access_token: string; room?: string; ticket?: string };
   const { user } = await sdk.commands.authenticate({ access_token });
 
   const avatarUrl = user.avatar
@@ -42,8 +51,11 @@ export async function startDiscord(): Promise<DiscordSession> {
     : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(user.id) >> 22n) % 6n)}.png`;
 
   return {
-    // A fresh id per session, so the same user on two devices doesn't collide.
-    self: { ...(await newIdentity()), name: user.global_name || user.username, avatarUrl },
-    roomId: sanitizeRoom(sdk.instanceId),
+    self: { ...identity, name: user.global_name || user.username, avatarUrl, ticket },
+    roomId: room ?? sanitizeRoom(sdk.instanceId),
+    openExternal: async (url) => {
+      await sdk.commands.openExternalLink({ url });
+    },
+    mobile: String(sdk.platform) === "mobile",
   };
 }

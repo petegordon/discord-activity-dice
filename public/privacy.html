@@ -12,7 +12,7 @@
     <main>
       <header>
         <h1>Privacy Policy</h1>
-        <p class="meta">7, 11, Doubles · Effective October 14, 2026</p>
+        <p class="meta">7, 11, Doubles · Effective October 15, 2026</p>
       </header>
 
       <p>
@@ -47,6 +47,14 @@
             <td>Our server exchanges the code for a token once, at sign-in, and hands the token back to your device. We don't store it.</td>
           </tr>
           <tr>
+            <td>Discord Activity instance ID</td>
+            <td>Discord, when you launch the Activity</td>
+            <td>
+              Seating everyone in the same Activity at the same table. Our server turns it into a room name and a pass that lets
+              you join that room. It doesn't store either.
+            </td>
+          </tr>
+          <tr>
             <td>Session ID and key</td>
             <td>Generated randomly on your device each time you open the Game</td>
             <td>Telling players apart, and stopping anyone from joining as you. They aren't tied to your Discord account.</td>
@@ -62,6 +70,15 @@
             <td>
               Detecting shakes and throws. Raw sensor readings are processed on your device and never leave it. Only the
               resulting throw (a direction, speed and spin) and a 0–1 shake level are sent to the table.
+            </td>
+          </tr>
+          <tr>
+            <td>Phone remote link</td>
+            <td>Generated on your device when you tap 📱 to use a phone as your dice cup</td>
+            <td>
+              Letting that phone throw for you. The link contains a random key after the <code>#</code>, a part of a web address
+              that browsers don't send to servers. Anyone with the link can throw for you until you make a new link, unpair, or leave
+              the table.
             </td>
           </tr>
           <tr>
@@ -118,19 +135,23 @@
           Your browser stores your typed name and your sound on/off setting (in <code>localStorage</code>) until you clear your
           browser data. These stay on your device.
         </li>
+        <li>
+          A phone used as a dice cup keeps its remote key in the browser tab's <code>sessionStorage</code>, so a refresh doesn't
+          disconnect it. It's deleted when you close the tab.
+        </li>
         <li>Our hosting provider may keep standard request and security logs for a limited time under its own policies.</li>
       </ul>
 
       <h2>5. Cookies and tracking</h2>
       <p>
-        The Game doesn't use advertising or analytics cookies or tracking pixels. It uses your browser's local storage only for the
-        two preferences described above.
+        The Game doesn't use advertising or analytics cookies or tracking pixels. It uses your browser's storage only for the
+        two preferences and the phone remote key described above.
       </p>
 
       <h2>6. Your choices and rights</h2>
       <ul>
         <li>You can play the web version without a Discord account, under any name you choose.</li>
-        <li>You can decline motion access. The Game then lets you throw by dragging or tapping instead.</li>
+        <li>You can decline motion access. The Game then lets you throw with Quick roll, or by flicking your finger on a phone remote.</li>
         <li>You can clear your saved name and settings at any time by clearing your browser's site data.</li>
         <li>You can revoke the Game's Discord access in Discord under <em>User Settings → Authorized Apps</em>.</li>
         <li>

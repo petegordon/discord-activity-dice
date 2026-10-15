@@ -1,8 +1,11 @@
 import type { ThrowInput } from "../net/protocol";
+import { motionEnv, motionVerdict } from "../platform/capabilities";
+import { inDiscord } from "../platform/env";
 import { MotionReader, SHAKE_TO_THROW, ShakeTracker } from "./motion";
 import { normalizeThrow } from "./throw";
 
-export type MotionState = "unknown" | "needs-permission" | "active" | "unavailable";
+/** "blocked": the browser forbids motion in this frame (Discord); "unavailable": no sensors or permission. */
+export type MotionState = "unknown" | "needs-permission" | "active" | "blocked" | "unavailable";
 
 export type ControllerCallbacks = {
   /** 0..1 while holding, ~15 Hz; 0 once when the hold ends. */
@@ -50,12 +53,14 @@ export class ThrowController {
     zone.addEventListener("pointercancel", () => this.endHold());
     zone.addEventListener("contextmenu", (e) => e.preventDefault());
 
-    // iOS needs an explicit permission tap. Desktop Chrome also exposes
-    // requestPermission but has no sensors, so only ask on touch devices.
-    if (typeof DeviceMotionEvent === "undefined") this.setMotion("unavailable");
-    else if (typeof (DeviceMotionEvent as DeviceMotionEventIOS).requestPermission === "function" && matchMedia("(pointer: coarse)").matches)
-      this.setMotion("needs-permission");
-    else this.listen();
+    const verdict = motionVerdict(motionEnv(inDiscord));
+    if (verdict === "probe") this.listen();
+    else this.setMotion(verdict);
+  }
+
+  /** No motion here, and none coming: blocked, missing, or denied. */
+  get motionOff() {
+    return this.motion === "blocked" || this.motion === "unavailable";
   }
 
   setEnabled(enabled: boolean) {

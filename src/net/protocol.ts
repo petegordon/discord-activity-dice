@@ -8,6 +8,10 @@ export type Player = {
   avatarUrl?: string;
   color: string;
   joinedAt: number;
+  /** Id of the phone paired as this player's shaker remote (see SHAKER-REMOTE.md). */
+  remoteId?: string;
+  /** Whether that phone is connected right now. */
+  remoteOnline?: boolean;
 };
 
 /** A throw gesture, already reduced to table space. See input/throw.ts. */
@@ -39,17 +43,29 @@ export type Msg =
   | { t: "shake"; intensity: number }
   /** shooter → host */
   | { t: "throw"; input: ThrowInput }
-  /** host → all. `game` is the state to show once the dice settle. */
-  | { t: "roll"; plan: RollPlan; game: GameState };
+  /** host → all. `game` is the state to show once the dice settle, about `landsInMs` after this arrives. */
+  | { t: "roll"; plan: RollPlan; game: GameState; landsInMs?: number }
+  /** player → host: make this remote id my shaker remote, replacing any other */
+  | { t: "pair"; remoteId: string }
+  /** player → host: forget my shaker remote */
+  | { t: "unpair" }
+  /** remote → host, on (re)connect: please send the current state */
+  | { t: "remote-hello" };
 
 export type Target = "host" | "all";
 
-export type Envelope = { from: string; to: Target; msg: Msg };
+/**
+ * `remote` is set by the relay or the PeerJS host when the sender connected
+ * as a shaker remote. It is never taken from the sender.
+ */
+export type Envelope = { from: string; to: Target; msg: Msg; remote?: boolean };
 
 /** The only message type a non-host may broadcast; transports drop the rest. */
 export const CLIENT_BROADCASTS: ReadonlySet<string> = new Set(["shake"]);
 
-const MSG_TYPES = new Set(["hello", "state", "shake", "throw", "roll"]);
+const MSG_TYPES = new Set(["hello", "state", "shake", "throw", "roll", "pair", "unpair", "remote-hello"]);
+
+export type Role = "player" | "remote";
 
 /** Light structural validation for anything arriving off the wire. */
 export function isEnvelope(value: unknown): value is Envelope {

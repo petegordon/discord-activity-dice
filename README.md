@@ -19,10 +19,25 @@ More in the [gallery](https://dice.housetandem.com/screenshots/). To regenerate 
 
 1. Open the site. It creates a room and puts its code in the URL. Use **Copy invite** to share it.
 2. The first player in the room is the host. The host picks the target and presses **Start game**.
-3. On your turn, **press and hold the cup**:
-   - **On a phone:** shake it, then flick it forward or let go to throw. On iPhone, tap **Enable shake to roll** first.
-   - **With a mouse or without motion:** wiggle, then flick upward.
-   - **Quick roll** is always there as an alternative.
+3. On your turn, **press and hold the cup**, shake your phone, then flick it forward or let go to throw. On iPhone, tap **Enable shake to roll** first.
+4. **No motion sensors?** In Discord, on a desktop, or on a phone that won't share its motion, the cup is replaced by **📱 Shake with your phone**. See below.
+5. **Quick roll** is always there as an alternative.
+
+## 📱 Shaker remote
+
+Discord doesn't let Activities read a phone's motion sensors. Its Activity iframe doesn't delegate the `accelerometer` and `gyroscope` [Permissions Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Permissions_Policy) features, and a frame can't turn them back on. So any phone can be the dice cup for a seat at the table:
+
+1. Tap **📱** (top right, or **Roll with your phone** in the lobby). The table shows a QR code and the full link.
+2. Scan it with a phone's camera and tap **Tap to connect**. The phone opens in its own browser, where motion works.
+3. On your turn, shake the phone and flick it. The dice roll on the table, and the phone shows the result once they land.
+
+Notes:
+- Inside Discord on a phone, **Open on this phone** opens the link in that phone's browser.
+- A 📱 badge next to your name shows everyone when your phone is connected.
+- **New link** makes the old one stop working, and **Unpair** stops using the phone.
+- Anyone with your link can throw for you, so don't show the code on a stream.
+
+The full design is in [SHAKER-REMOTE.md](SHAKER-REMOTE.md).
 
 ## Playing on phones
 
@@ -48,7 +63,19 @@ With `npm run preview` running:
 node scripts/e2e.mjs http://127.0.0.1:8787 relay 3    # or: peerjs 3
 ```
 
-This drives several headless Chrome players through a full match. It includes a real flick gesture and a host disconnect partway through. It checks that every player saw identical rolls and scores, and saves screenshots to `scripts/out/`.
+This drives several headless Chrome players through a full match, with a host disconnect partway through. It checks that every player saw identical rolls and scores, and saves screenshots to `scripts/out/`.
+
+```bash
+node scripts/e2e-remote.mjs http://127.0.0.1:8787 relay   # or: peerjs
+```
+
+This tests the shaker remote:
+- A phone page opened before anyone is at the table never becomes host.
+- A player pairs a phone from the lobby, and the phone throws with synthetic shake-and-flick motion events.
+- The host leaves mid-game and the phone keeps working with the new host.
+- **New link** locks out the old phone.
+
+Add `&nomotion` to any table URL to see the no-motion (Discord or desktop) layout on a phone.
 
 ### Choosing a transport
 
@@ -113,9 +140,12 @@ src/
   dice/                   face math, physics sim + recording, roll planning, playback
   input/                  device-motion shake/flick detection, pointer fallback, throw normalisation
   net/                    protocol, transports (PeerJS, relay), room coordination
-  platform/               environment, identity/rooms, Discord SDK
+  platform/               environment, identity/rooms, Discord SDK, motion detection
+  remote/                 the 📱 shaker remote page (remote.html, served at /remote)
   render/                 Three.js table and dice
 worker/src/index.ts       Worker: assets, /api/token, /api/ice, RelayRoom Durable Object
+worker/src/roomTicket.ts  Discord room names and join tickets
 test/                     Vitest unit tests
 scripts/e2e.mjs           Playwright multi-player smoke test
+scripts/e2e-remote.mjs    Playwright shaker-remote test
 ```

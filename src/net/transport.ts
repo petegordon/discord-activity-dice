@@ -5,7 +5,7 @@ export type TransportKind = "peerjs" | "relay";
 export type TransportEvents = {
   /** An envelope from another player. Never echoes our own sends. */
   message: (env: Envelope) => void;
-  /** Host only: the full set of players currently connected (including self). */
+  /** Host only: everyone currently connected: players (including self) and shaker remotes. */
   peers: (playerIds: string[]) => void;
   /** Our host role changed, or we (re)connected to a new host. */
   "host-change": (isHost: boolean) => void;

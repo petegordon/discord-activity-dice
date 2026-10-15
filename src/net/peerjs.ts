@@ -1,6 +1,6 @@
 import Peer, { type DataConnection, type PeerError, type PeerOptions } from "peerjs";
 import { verifyPlayerKey } from "./identityKey";
-import { CLIENT_BROADCASTS, isEnvelope, type Envelope, type Msg, type Target } from "./protocol";
+import { CLIENT_BROADCASTS, isEnvelope, type Envelope, type Msg, type Role, type Target } from "./protocol";
 import { Emitter, type Transport, type TransportEvents } from "./transport";
 
 const HEARTBEAT_MS = 3_000;
@@ -30,6 +30,7 @@ type JoinResult = "joined" | "no-host" | "timeout";
  * The host registers the well-known id `dice-<room>-host`; everyone else
  * connects to it. When the host disappears, players try to claim the id in
  * join order (see `successionDelay`), and the rest reconnect to the winner.
+ * A shaker remote (role "remote") never claims host; it only joins.
  */
 export class PeerJsTransport implements Transport {
   readonly kind = "peerjs";
@@ -54,6 +55,7 @@ export class PeerJsTransport implements Transport {
     private readonly selfId: string,
     private readonly key: string,
     private readonly options: PeerOptions,
+    private readonly role: Role = "player",
   ) {
     this.hostPeerId = `dice-${roomId}-host`;
   }
@@ -65,7 +67,8 @@ export class PeerJsTransport implements Transport {
   async connect() {
     this.events.emit("status", { kind: "connecting" });
     this.heartbeat = setInterval(() => this.beat(), HEARTBEAT_MS);
-    await this.establish(null);
+    // A remote may well be opened before the table, so it waits as long as a migration would.
+    await this.establish(this.role === "remote" ? Date.now() + MIGRATION_DEADLINE_MS : null);
   }
 
   /**
@@ -80,7 +83,7 @@ export class PeerJsTransport implements Transport {
     try {
       for (let attempt = 0; !this.closed; attempt++) {
         try {
-          if ((await this.claimHost()) === "host") return this.becameConnected(true);
+          if (this.role === "player" && (await this.claimHost()) === "host") return this.becameConnected(true);
           const joined = await this.joinHost();
           if (joined === "joined") return this.becameConnected(false);
           if (joined === "timeout" && deadline === null) {
@@ -170,7 +173,7 @@ export class PeerJsTransport implements Transport {
       const conn = peer.connect(this.hostPeerId, {
         reliable: true,
         serialization: "json",
-        metadata: { playerId: this.selfId, key: this.key },
+        metadata: { playerId: this.selfId, key: this.key, role: this.role },
       });
       let settled = false;
       const finish = (r: JoinResult) => {
@@ -217,8 +220,9 @@ export class PeerJsTransport implements Transport {
   }
 
   private acceptConnection(conn: DataConnection) {
-    const meta = conn.metadata as { playerId?: unknown; key?: unknown } | undefined;
+    const meta = conn.metadata as { playerId?: unknown; key?: unknown; role?: unknown } | undefined;
     const playerId = meta?.playerId;
+    const remote = meta?.role === "remote";
     let verified = false;
     const ready = typeof playerId === "string" && playerId !== this.selfId ? verifyPlayerKey(playerId, meta?.key) : Promise.resolve(false);
     void ready.then((ok) => {
@@ -232,8 +236,8 @@ export class PeerJsTransport implements Transport {
       this.lastSeen.set(conn, Date.now());
       if (!isEnvelope(data)) return;
       const id = playerId as string;
-      // Never trust the sender's claimed identity.
-      const env: Envelope = { ...data, from: id };
+      // Never trust the sender's claimed identity or role.
+      const env: Envelope = { ...data, from: id, remote };
       if (env.to === "all") {
         if (!CLIENT_BROADCASTS.has(env.msg.t)) return;
         const now = Date.now();

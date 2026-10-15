@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyPlayerKey } from "../../src/net/identityKey";
 import { CLIENT_BROADCASTS } from "../../src/net/protocol";
+import { splitPeers, type Attachment } from "./peers";
+import { DISCORD_ROOM_RE, discordRoom, roomTicket, verifyRoomTicket } from "./roomTicket";
 
 export interface Env {
   RELAY: DurableObjectNamespace<RelayRoom>;
@@ -15,7 +17,8 @@ export interface Env {
 const ROOM_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_MESSAGE_BYTES = 64 * 1024;
-const MAX_SOCKETS_PER_ROOM = 32;
+/** Players plus their shaker remotes. */
+const MAX_SOCKETS_PER_ROOM = 48;
 /** Clients ping every 5s; a socket silent for this long is treated as dead (half-open TCP). */
 const STALE_MS = 16_000;
 /** Shakes are cosmetic; relay at most one per this interval per socket. */
@@ -46,6 +49,12 @@ export default {
       if (!ROOM_RE.test(room) || !ID_RE.test(id)) return json({ error: "bad room or id" }, 400);
       // The id must be derived from the caller's secret key, so nobody can join as (or kick) someone else.
       if (!(await verifyPlayerKey(id, url.searchParams.get("key")))) return json({ error: "bad key" }, 403);
+      // Players in a Discord room need the ticket from /api/token. Remotes don't: the host ignores any remote nobody paired.
+      const role = url.searchParams.get("role") === "remote" ? "remote" : "player";
+      if (role === "player" && DISCORD_ROOM_RE.test(room)) {
+        const ok = !!env.DISCORD_CLIENT_SECRET && (await verifyRoomTicket(env.DISCORD_CLIENT_SECRET, room, id, url.searchParams.get("ticket")));
+        if (!ok) return json({ error: "bad ticket" }, 403);
+      }
       if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected websocket" }, 426);
       return env.RELAY.get(env.RELAY.idFromName(room)).fetch(req);
     }
@@ -58,12 +67,13 @@ export default {
 /** Discord Embedded App SDK: swap the authorize() code for an access token. */
 async function exchangeToken(req: Request, env: Env): Promise<Response> {
   if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) return json({ error: "Discord is not configured" }, 503);
-  let code: unknown;
+  let body: { code?: unknown; instanceId?: unknown; playerId?: unknown };
   try {
-    code = ((await req.json()) as { code?: unknown }).code;
+    body = (await req.json()) as typeof body;
   } catch {
     return json({ error: "invalid body" }, 400);
   }
+  const { code, instanceId, playerId } = body;
   if (typeof code !== "string" || code.length > 512) return json({ error: "missing code" }, 400);
 
   const res = await fetch("https://discord.com/api/oauth2/token", {
@@ -82,7 +92,13 @@ async function exchangeToken(req: Request, env: Env): Promise<Response> {
     return json({ error: "token exchange failed", discord: typeof detail === "string" ? detail : res.status }, 502);
   }
   const { access_token } = (await res.json()) as { access_token?: string };
-  return access_token ? json({ access_token }) : json({ error: "token exchange failed" }, 502);
+  if (!access_token) return json({ error: "token exchange failed" }, 502);
+  // Older clients don't send these and keep using the raw instance id as their room.
+  if (typeof instanceId !== "string" || instanceId.length > 256 || typeof playerId !== "string" || !ID_RE.test(playerId)) {
+    return json({ access_token });
+  }
+  const room = await discordRoom(env.DISCORD_CLIENT_SECRET, instanceId);
+  return json({ access_token, room, ticket: await roomTicket(env.DISCORD_CLIENT_SECRET, room, playerId) });
 }
 
 /**
@@ -114,11 +130,10 @@ async function iceServers(req: Request, env: Env): Promise<Response> {
   }
 }
 
-type Attachment = { id: string; joinedAt: number; lastShake?: number };
-
 /**
  * One instance per room. Relays envelopes between sockets and tells everyone
- * the connection order; the earliest connection is the host. Uses the
+ * the connection order; the earliest player connection is the host. Shaker
+ * remotes are relayed like players but are never host. Uses the
  * hibernation API so idle rooms cost nothing.
  */
 export class RelayRoom extends DurableObject<Env> {
@@ -128,7 +143,9 @@ export class RelayRoom extends DurableObject<Env> {
   }
 
   async fetch(req: Request): Promise<Response> {
-    const id = new URL(req.url).searchParams.get("id")!;
+    const url = new URL(req.url);
+    const id = url.searchParams.get("id")!;
+    const role = url.searchParams.get("role") === "remote" ? "remote" : "player";
     // A reconnecting player replaces their old socket.
     for (const ws of this.ctx.getWebSockets(id)) ws.close(4000, "replaced");
     if (this.sockets().length >= MAX_SOCKETS_PER_ROOM) return json({ error: "room full" }, 429);
@@ -136,7 +153,7 @@ export class RelayRoom extends DurableObject<Env> {
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, [id]);
     const joinedAt = Math.max(Date.now(), ...this.sockets().map((s) => s.att.joinedAt + 1));
-    server.serializeAttachment({ id, joinedAt } satisfies Attachment);
+    server.serializeAttachment({ id, joinedAt, role } satisfies Attachment);
     this.broadcastPeers();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -160,9 +177,9 @@ export class RelayRoom extends DurableObject<Env> {
     }
     this.evictStale();
     const ordered = this.sockets();
-    const host = ordered[0];
+    const host = splitPeers(ordered).players[0];
     if (!host) return;
-    const out = JSON.stringify({ type: "env", env: { from: sender.id, to, msg } });
+    const out = JSON.stringify({ type: "env", env: { from: sender.id, to, msg, ...(sender.role === "remote" ? { remote: true } : {}) } });
 
     if (to === "host") {
       if (host.ws !== ws) host.ws.send(out);
@@ -212,9 +229,11 @@ export class RelayRoom extends DurableObject<Env> {
       .sort((a, b) => a.att.joinedAt - b.att.joinedAt || a.att.id.localeCompare(b.att.id));
   }
 
+  /** `ids`: players in connection order, so ids[0] is host. `remotes`: shaker remotes. */
   private broadcastPeers(exclude?: WebSocket) {
     const sockets = this.sockets(exclude);
-    const out = JSON.stringify({ type: "peers", ids: sockets.map((s) => s.att.id) });
+    const { players, remotes } = splitPeers(sockets);
+    const out = JSON.stringify({ type: "peers", ids: players.map((s) => s.att.id), remotes: remotes.map((s) => s.att.id) });
     for (const s of sockets) s.ws.send(out);
   }
 }

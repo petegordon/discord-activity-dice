@@ -1,5 +1,5 @@
 import "./style.css";
-import type { PeerOptions } from "peerjs";
+import { renderSVG } from "uqr";
 import { DiceAudio } from "./audio";
 import { planRoll } from "./dice/plan";
 import { preparePlayback } from "./dice/roller";
@@ -7,14 +7,16 @@ import { createGame, type GameState } from "./game/sevenElevenDoubles";
 import { ThrowController } from "./input/controller";
 import { buttonThrow } from "./input/throw";
 import { PeerJsTransport } from "./net/peerjs";
+import { peerOptions } from "./net/peerOptions";
 import type { Player } from "./net/protocol";
 import { RelayTransport } from "./net/relay";
 import { Room, type Self } from "./net/room";
 import type { Transport } from "./net/transport";
-import { startDiscord } from "./platform/discord";
-import { apiBase, debug, inDiscord, peerServer, transportChoice } from "./platform/env";
+import { startDiscord, type DiscordSession } from "./platform/discord";
+import { apiBase, debug, inDiscord, transportChoice } from "./platform/env";
 import { inviteLink, standaloneRoom, storedName, storeName } from "./platform/identity";
 import { newIdentity } from "./net/identityKey";
+import { remoteLink } from "./remote/link";
 import { DiceScene } from "./render/scene";
 import { UI } from "./ui";
 
@@ -23,28 +25,8 @@ const THROW_ACK_TIMEOUT_MS = 4_000;
 /** Let the result callout breathe before the shooter can throw again. */
 const AFTER_LANDING_MS = 700;
 
-async function iceServers(): Promise<RTCIceServer[]> {
-  const fallback: RTCIceServer[] = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
-  try {
-    const res = await fetch(`${apiBase}/ice`, { signal: AbortSignal.timeout(2500) });
-    if (!res.ok) return fallback;
-    const body = (await res.json()) as { iceServers?: RTCIceServer[] };
-    return Array.isArray(body.iceServers) && body.iceServers.length ? body.iceServers : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function peerOptions(): Promise<PeerOptions> {
-  const options: PeerOptions = { debug: debug ? 2 : 0, config: { iceServers: await iceServers() } };
-  if (peerServer.host) {
-    options.host = peerServer.host;
-    options.port = peerServer.port ?? 443;
-    options.path = peerServer.path ?? "/";
-    options.secure = options.port === 443;
-  }
-  return options;
-}
+/** Don't re-send a pairing the host hasn't reflected yet more often than this. */
+const REPAIR_MS = 3_000;
 
 async function boot() {
   const audio = new DiceAudio();
@@ -52,6 +34,9 @@ async function boot() {
   let roomId = "";
   let room: Room | null = null;
   let controller: ThrowController | null = null;
+  let discord: DiscordSession | null = null;
+  /** Our shaker remote's identity, once the 📱 sheet has been opened. */
+  let remote: { id: string; key: string; sentAt: number } | null = null;
 
   const ui = new UI(
     {
@@ -74,6 +59,16 @@ async function boot() {
         return audio.muted;
       },
       copyInvite: () => navigator.clipboard.writeText(inviteLink(roomId, transportKind)),
+      openRemote: () => void openRemote(false),
+      remoteNewLink: () => void openRemote(true),
+      remoteUnpair: () => {
+        room?.unpair();
+        remote = null;
+        ui.hidePair();
+      },
+      remoteOpenHere: () => {
+        if (remote) void discord?.openExternal(remoteLink(roomId, transportKind, remote.key)).catch(() => {});
+      },
     },
     audio.muted,
   );
@@ -85,7 +80,8 @@ async function boot() {
   let self: Self;
   if (inDiscord) {
     try {
-      ({ self, roomId } = await startDiscord());
+      discord = await startDiscord();
+      ({ self, roomId } = discord);
     } catch (err) {
       ui.fatal(`Couldn't connect to Discord: ${(err as Error).message}`);
       return;
@@ -103,7 +99,7 @@ async function boot() {
 
   ui.status({ kind: "connecting" });
   const transport: Transport =
-    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase)
+    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase, { ticket: self.ticket })
       : new PeerJsTransport(roomId, self.id, self.key, await peerOptions());
   room = new Room(transport, self, (rollId, shooter, input) => planRoll(rollId, shooter, input));
   const r = room;
@@ -120,18 +116,72 @@ async function boot() {
 
   const playerById = (id: string | null) => players.find((p) => p.id === id);
   const myTurn = () => shown.phase === "awaitingThrow" && shown.shooterId === self.id && !rolling && !cooling && awaitingAck === undefined;
+  const me = () => playerById(self.id);
+  /** Our paired phone is connected to the table right now. */
+  const remoteOnline = () => !!remote && me()?.remoteId === remote.id && !!me()?.remoteOnline;
+  let remoteWasOnline = false;
+
+  /** Why the phone is the cup here; shown on the 📱 sheet. */
+  function remoteWhy() {
+    if (controller?.motion === "blocked" && inDiscord) {
+      return "Discord doesn't let Activities read motion sensors. Scan this with your phone's camera to use its browser as your dice cup.";
+    }
+    if (controller?.motionOff) return "Scan this with your phone's camera to use it as your dice cup.";
+    return "Scan this with another phone to use it as your dice cup, handy with this device on a stand.";
+  }
+
+  function paintPair() {
+    if (!remote || !ui.pairOpen) return;
+    const link = remoteLink(roomId, transportKind, remote.key);
+    ui.showPair({
+      link,
+      qrSvg: renderSVG(link, { ecc: "M", border: 1 }),
+      why: remoteWhy(),
+      canOpenHere: !!discord?.mobile,
+      paired: me()?.remoteId === remote.id,
+      online: remoteOnline(),
+    });
+  }
+
+  /** Show the 📱 sheet, pairing a new remote first if we have none (or `fresh` asks for a new link). */
+  async function openRemote(fresh: boolean) {
+    if (!room) return;
+    if (fresh || !remote) {
+      const { id, key } = await newIdentity();
+      remote = { id, key, sentAt: Date.now() };
+      room.pair(id);
+    }
+    ui.openPair();
+    paintPair();
+  }
+
+  /** The host may have lost our pairing (e.g. we were dropped and rejoined); quietly re-send it. */
+  function keepPaired() {
+    const mine = me();
+    if (!remote || !mine || mine.remoteId === remote.id || Date.now() - remote.sentAt < REPAIR_MS) return;
+    remote.sentAt = Date.now();
+    r.pair(remote.id);
+  }
 
   function refresh() {
     ui.render({ players, game: shown, selfId: self.id, hostId: r.hostId, isHost: r.isHost });
     const shooter = playerById(shown.shooterId);
     const mine = myTurn();
-    controller?.setEnabled(mine);
+    // No motion here: the cup is hidden and the phone (or Quick roll) throws.
+    const phoneIsCup = !!controller?.motionOff || remoteOnline();
+    controller?.setEnabled(mine && !phoneIsCup);
+    ui.showLobbyPhone(!!controller?.motionOff && !remoteOnline());
     if (shown.phase !== "awaitingThrow") ui.setZone("hidden");
     else if (rolling || awaitingAck !== undefined) ui.setZone("rolling");
     else if (cooling) ui.setZone("settling", { shooterName: shooter?.id === self.id ? undefined : shooter?.name });
-    else if (mine) ui.setZone("mine", { color: shooter?.color, motion: controller?.motion === "active" });
-    else ui.setZone("waiting", { shooterName: shooter?.name });
-    ui.showEnableMotion(mine && controller?.motion === "needs-permission");
+    else if (mine) {
+      ui.setZone("mine", {
+        color: shooter?.color,
+        motion: controller?.motion === "active",
+        remote: phoneIsCup ? { online: remoteOnline(), why: "Roll with your phone, or use Quick roll" } : undefined,
+      });
+    } else ui.setZone("waiting", { shooterName: shooter?.name });
+    ui.showEnableMotion(mine && !phoneIsCup && controller?.motion === "needs-permission");
     if (!rolling && shooter) scene.setColor(shooter.color);
     // A new match starts with the dice in hand.
     if (!rolling && shown.phase === "awaitingThrow" && !shown.lastRoll) scene.toHand();
@@ -165,6 +215,14 @@ async function boot() {
   r.on("state", (p, game) => {
     players = p;
     if (!rolling) shown = game;
+    keepPaired();
+    const online = remoteOnline();
+    if (online !== remoteWasOnline) {
+      ui.hint(online ? "📱 Phone connected. Shake it on your turn!" : "📱 Phone disconnected");
+      if (online && ui.pairOpen) setTimeout(() => ui.hidePair(), 1200);
+    }
+    remoteWasOnline = online;
+    paintPair();
     refresh();
   });
 
@@ -199,6 +257,7 @@ async function boot() {
   });
 
   r.on("role", () => refresh());
+  r.on("status", (s) => ui.showRemoteButton(s.kind === "connected"));
   r.on("status", (s) => ui.status(s, transportKind === "peerjs" && s.kind === "failed" ? inviteLink(roomId, "relay") : undefined));
 
   if (debug) Object.assign(window, { dice: { room: r, scene, self } });

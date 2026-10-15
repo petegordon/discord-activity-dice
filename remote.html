@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1a14" />
+    <meta name="robots" content="noindex" />
+    <title>Dice Cup · 7, 11, Doubles</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div id="app" class="remote">
+      <header class="r-top">
+        <div id="r-me" class="r-me"></div>
+        <div id="r-conn" class="r-conn">Offline</div>
+      </header>
+
+      <main class="r-main">
+        <div id="r-banner" class="r-banner"></div>
+        <div id="zone" class="r-cup waiting" role="button" tabindex="0" aria-label="Hold and shake to roll the dice">
+          <div class="zone-title">Dice cup</div>
+          <div class="zone-sub"></div>
+        </div>
+        <div id="r-callout" class="r-callout" aria-live="assertive">
+          <div class="callout-main"></div>
+          <div class="callout-sub"></div>
+        </div>
+        <div id="r-hint" class="r-hint" aria-live="polite"></div>
+      </main>
+
+      <ol id="r-scores" class="r-scores" aria-label="Scores"></ol>
+
+      <section id="r-start" class="r-layer">
+        <div class="r-card">
+          <div class="r-big">📱🎲</div>
+          <h1>Your phone is the dice cup</h1>
+          <p>The dice roll on the table screen. Here you just shake and throw.</p>
+          <button id="r-connect" class="primary" type="button">Tap to connect</button>
+          <p class="r-small">On iPhone, allow motion access when asked.</p>
+        </div>
+      </section>
+
+      <section id="r-message" class="r-layer" hidden>
+        <div class="r-card">
+          <h1 id="r-msg-title"></h1>
+          <p id="r-msg-text"></p>
+          <button id="r-retry" class="primary" type="button" hidden>Try again</button>
+        </div>
+      </section>
+    </div>
+    <script type="module" src="/src/remote/main.ts"></script>
+  </body>
+</html>

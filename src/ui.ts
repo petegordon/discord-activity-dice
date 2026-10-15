@@ -28,9 +28,28 @@ export type UIHandlers = {
   enableMotion: () => void;
   toggleMute: () => boolean;
   copyInvite: () => Promise<void>;
+  /** Open the shaker-remote sheet (📱). */
+  openRemote: () => void;
+  remoteOpenHere: () => void;
+  remoteNewLink: () => void;
+  remoteUnpair: () => void;
 };
 
-function hitLabel(r: RollRecord): string {
+/** The pairing sheet's contents. See SHAKER-REMOTE.md §2.1. */
+export type PairView = {
+  link: string;
+  qrSvg: string;
+  why: string;
+  /** Show "Open on this phone" (Discord on a phone). */
+  canOpenHere: boolean;
+  paired: boolean;
+  online: boolean;
+};
+
+/** How the cup zone looks on your turn when your phone is the dice cup. */
+export type RemoteZone = { online: boolean; why: string };
+
+export function hitLabel(r: RollRecord): string {
   switch (r.hit) {
     case "seven":
       return "SEVEN!";
@@ -73,6 +92,15 @@ export class UI {
       }
       setTimeout(() => (btn.textContent = "Copy invite"), 1600);
     });
+    $("remote-btn").addEventListener("click", () => handlers.openRemote());
+    $("use-phone").addEventListener("click", () => handlers.openRemote());
+    $("lobby-phone").addEventListener("click", () => handlers.openRemote());
+    $("pair-open").addEventListener("click", () => handlers.remoteOpenHere());
+    $("pair-new").addEventListener("click", () => handlers.remoteNewLink());
+    $("pair-unpair").addEventListener("click", () => handlers.remoteUnpair());
+    $("pair-close").addEventListener("click", () => this.hidePair());
+    $("pair").addEventListener("click", (e) => e.target === $("pair") && this.hidePair());
+    $("pair-copy").addEventListener("click", () => this.copyPairLink());
   }
 
   askName(initial: string): Promise<string> {
@@ -126,6 +154,11 @@ export class UI {
           const li = el("li", { className: "player" + (p.id === game.shooterId && game.phase === "awaitingThrow" ? " shooter" : "") });
           li.style.setProperty("--pc", p.color);
           li.append(avatar(p), el("span", { className: "name", text: p.id === selfId ? `${p.name} (you)` : p.name }));
+          if (p.remoteId) {
+            const badge = el("span", { className: "remote-badge" + (p.remoteOnline ? " online" : ""), text: "📱" });
+            badge.title = p.remoteOnline ? "Rolling with their phone" : "Phone remote offline";
+            li.append(badge);
+          }
           if (game.phase !== "lobby") li.append(el("span", { className: "score", text: String(game.scores[p.id] ?? 0) }));
           return li;
         }),
@@ -177,15 +210,26 @@ export class UI {
   }
 
   /** The cup zone: yours to shake, or showing whose turn it is. */
-  setZone(state: "mine" | "rolling" | "settling" | "waiting" | "hidden", opts: { color?: string; motion?: boolean; shooterName?: string } = {}) {
+  setZone(
+    state: "mine" | "rolling" | "settling" | "waiting" | "hidden",
+    opts: { color?: string; motion?: boolean; shooterName?: string; remote?: RemoteZone } = {},
+  ) {
     const zone = this.zone;
+    const remote = state === "mine" ? opts.remote : undefined;
     zone.hidden = state === "hidden";
     zone.classList.toggle("mine", state === "mine");
+    zone.classList.toggle("remote", !!remote);
     zone.classList.toggle("waiting", state !== "mine");
+    $("use-phone").hidden = !remote || remote.online;
     if (opts.color) zone.style.setProperty("--pc", opts.color);
     const title = zone.querySelector(".zone-title")!;
     const sub = zone.querySelector(".zone-sub")!;
-    if (state === "mine") {
+    if (remote) {
+      // No motion here: the phone is the dice cup, with Quick roll as the fallback.
+      title.textContent = remote.online ? "SHAKE YOUR PHONE" : "YOUR ROLL";
+      sub.textContent = remote.online ? "Shake it, then flick it or let go to throw" : remote.why;
+      zone.setAttribute("aria-label", remote.online ? "Shake your phone to roll" : "Your roll");
+    } else if (state === "mine") {
       title.textContent = "HOLD & SHAKE";
       sub.textContent = opts.motion ? "Shake your phone, then flick it or let go to throw" : "Hold here, wiggle, then flick upward to throw";
       zone.setAttribute("aria-label", "Hold and shake to roll the dice");
@@ -209,6 +253,58 @@ export class UI {
 
   showEnableMotion(show: boolean) {
     $("enable-motion").hidden = !show;
+  }
+
+  showRemoteButton(show: boolean) {
+    $("remote-btn").hidden = !show;
+  }
+
+  /** Offer pairing up front in the lobby where there's no motion. */
+  showLobbyPhone(show: boolean) {
+    $("lobby-phone").hidden = !show;
+  }
+
+  get pairOpen() {
+    return !$("pair").hidden;
+  }
+
+  showPair(v: PairView) {
+    $("pair-why").textContent = v.why;
+    // uqr renders a plain <svg> of rects from our own link; nothing user-supplied.
+    $("pair-qr").innerHTML = v.qrSvg;
+    $("pair-link").textContent = v.link;
+    $("pair-open").hidden = !v.canOpenHere;
+    $("pair-unpair").hidden = !v.paired;
+    const status = $("pair-status");
+    status.textContent = v.online ? "✅ Phone connected. Shake it on your turn!" : "Waiting for your phone… Scan the code with its camera.";
+    status.classList.toggle("ok", v.online);
+    $("pair").hidden = false;
+  }
+
+  openPair() {
+    $("pair").hidden = false;
+  }
+
+  hidePair() {
+    $("pair").hidden = true;
+  }
+
+  /** The clipboard is blocked in the Discord iframe; fall back to selecting the link for a manual copy. */
+  private async copyPairLink() {
+    const link = $("pair-link");
+    const btn = $("pair-copy");
+    try {
+      await navigator.clipboard.writeText(link.textContent ?? "");
+      btn.textContent = "Copied!";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(link);
+      const sel = getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      btn.textContent = "Selected — copy it";
+    }
+    setTimeout(() => (btn.textContent = "Copy link"), 2000);
   }
 
   hint(text: string, ms = 2400) {

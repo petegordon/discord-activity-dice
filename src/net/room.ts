@@ -1,6 +1,6 @@
 import { HostAuthority, type PlanFn } from "../game/host";
 import { createGame, type GameState } from "../game/sevenElevenDoubles";
-import type { Envelope, Msg, Player, RollPlan, ThrowInput } from "./protocol";
+import type { Envelope, Msg, Player, Role, RollPlan, ThrowInput } from "./protocol";
 import { Emitter, type Transport, type TransportStatus } from "./transport";
 
 /** How long a player who disconnects (or a whole table after a host migration) has to come back before being dropped. */
@@ -11,19 +11,25 @@ const SUCCESSION_STEP_MS = 1_500;
 
 export type RoomEvents = {
   state: (players: Player[], game: GameState) => void;
-  roll: (plan: RollPlan, game: GameState) => void;
+  roll: (plan: RollPlan, game: GameState, landsInMs: number | undefined) => void;
   shake: (from: string, intensity: number) => void;
   status: (status: TransportStatus) => void;
   role: (isHost: boolean) => void;
 };
 
-/** `key` proves ownership of `id` (see identityKey.ts) and is never broadcast. */
-export type Self = { id: string; key: string; name: string; avatarUrl?: string };
+/**
+ * `key` proves ownership of `id` (see identityKey.ts) and is never broadcast.
+ * `ticket` admits a player to a Discord room on the relay (worker/src/roomTicket.ts).
+ */
+export type Self = { id: string; key: string; name: string; avatarUrl?: string; ticket?: string };
 
 /**
  * Glues a transport to the game. Whoever is host runs a HostAuthority and
  * broadcasts its results; everyone (host included) renders from the same
  * "state" and "roll" messages.
+ *
+ * With role "remote" this is a shaker remote: it never joins as a player or
+ * becomes host, and only throws and shakes for the player it's paired with.
  */
 export class Room {
   players: Player[] = [];
@@ -40,6 +46,7 @@ export class Room {
     readonly self: Self,
     private readonly plan: PlanFn,
     private readonly now: () => number = Date.now,
+    readonly role: Role = "player",
   ) {
     transport.on("message", (env) => this.onMessage(env));
     transport.on("host-change", (isHost) => this.onHostChange(isHost));
@@ -88,6 +95,27 @@ export class Room {
     this.transport.send({ t: "shake", intensity }, "all");
   }
 
+  /** Make `remoteId` our shaker remote (replacing any other). */
+  pair(remoteId: string) {
+    this.request({ t: "pair", remoteId });
+  }
+
+  unpair() {
+    this.request({ t: "unpair" });
+  }
+
+  /** The player whose turn it is, or the shooter's paired remote. */
+  isShooter(id: string) {
+    const shooter = this.game.shooterId;
+    if (!shooter) return false;
+    return id === shooter || id === this.players.find((p) => p.id === shooter)?.remoteId;
+  }
+
+  private request(msg: Msg) {
+    if (this.authority) this.broadcast(this.authority.handle(this.self.id, msg));
+    else this.transport.send(msg, "host");
+  }
+
   /** Send to everyone else and apply locally, in that order. */
   private broadcast(msgs: Msg[]) {
     for (const msg of msgs) {
@@ -104,7 +132,7 @@ export class Room {
       this.events.emit("state", msg.players, msg.game);
     } else if (msg.t === "roll") {
       this.game = msg.game;
-      this.events.emit("roll", msg.plan, msg.game);
+      this.events.emit("roll", msg.plan, msg.game, msg.landsInMs);
     }
   }
 
@@ -112,11 +140,11 @@ export class Room {
     const { msg } = env;
     if (msg.t === "shake") {
       const intensity = Math.min(1, Math.max(0, Number(msg.intensity) || 0));
-      if (env.from === this.game.shooterId) this.events.emit("shake", env.from, intensity);
+      if (this.isShooter(env.from)) this.events.emit("shake", env.from, intensity);
       return;
     }
     if (env.to === "host") {
-      if (this.authority) this.broadcast(this.authority.handle(env.from, msg));
+      if (this.authority) this.broadcast(this.authority.handle(env.from, msg, env.remote === true));
       return;
     }
     // Only the host broadcasts state and rolls (transports enforce this too).
@@ -124,6 +152,12 @@ export class Room {
   }
 
   private onHostChange(isHost: boolean) {
+    if (this.role === "remote") {
+      // Transports never make a remote the host; just ask whoever is for the state.
+      this.transport.send({ t: "remote-hello" }, "host");
+      this.events.emit("role", false);
+      return;
+    }
     if (isHost) {
       const authority = new HostAuthority({ selfId: this.self.id, plan: this.plan });
       const previousHost = this.hostId;
@@ -147,10 +181,11 @@ export class Room {
     this.events.emit("role", isHost);
   }
 
-  /** Host only: who is connected right now. Absent players are dropped after the grace period. */
+  /** Host only: who is connected right now (players and remotes). Absent players are dropped after the grace period. */
   private onPeers(ids: string[]) {
     if (!this.authority) return;
     const present = new Set(ids);
+    this.broadcast(this.authority.remotesOnline(present));
     const t = this.now();
     for (const p of this.authority.players) {
       if (p.id === this.self.id || present.has(p.id)) this.missingSince.delete(p.id);
