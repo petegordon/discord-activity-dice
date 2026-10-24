@@ -131,8 +131,8 @@ interface Transport {
 }
 ```
 
-- `PeerJsTransport` — default (WebRTC data channels).
-- `RelayTransport` — WebSocket to a **Cloudflare Durable Object** per room (`/api/relay/<roomId>`), same protocol, simple broadcast. Chosen per room with `?t=relay` (default inside Discord). A room can't mix transports, so rather than falling back silently, a failed WebRTC join shows a link to the relay version of the room.
+- `PeerJsTransport` — WebRTC data channels; opt-in with `?t=peerjs` since 2026-10-24.
+- `RelayTransport` — WebSocket to a **Cloudflare Durable Object** per room (`/api/relay/<roomId>`), same protocol, simple broadcast. The default for every room since 2026-10-24, after phone remotes on some networks never connected over WebRTC without TURN. A room can't mix transports, so rather than falling back silently, a failed WebRTC join shows a link to the relay version of the room.
 - TURN credentials (e.g. Cloudflare Calls TURN) issued short-lived by the Worker.
 
 ---

@@ -11,15 +11,16 @@ export const DISCORD_CLIENT_ID: string = import.meta.env.VITE_DISCORD_CLIENT_ID 
 export type TransportChoice = "peerjs" | "relay";
 
 /**
- * Standalone rooms default to peer-to-peer; Discord defaults to the relay
- * because WebRTC through the Activity sandbox isn't guaranteed. Override with
+ * Every room defaults to the relay (our Cloudflare Durable Object). Direct
+ * WebRTC links with no TURN server failed for phones on some networks, even on
+ * the same Wi-Fi, so peer-to-peer is opt-in. Override with
  * ?t=relay or ?t=peerjs. Everyone in a room must use the same transport, so
  * invite links carry the choice.
  */
 export function transportChoice(): TransportChoice {
   const t = params.get("t") ?? params.get("transport");
   if (t === "relay" || t === "peerjs") return t;
-  return inDiscord ? "relay" : "peerjs";
+  return "relay";
 }
 
 export const peerServer = {

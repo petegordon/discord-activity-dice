@@ -117,10 +117,10 @@ Add `&nomotion` to any table URL to see the no-motion (Discord or desktop) layou
 
 | URL | Transport |
 |---|---|
-| `?room=ABC123` | PeerJS / WebRTC (standalone default) |
-| `?room=ABC123&t=relay` | WebSocket relay via Durable Object (Discord default) |
+| `?room=ABC123` | WebSocket relay via Durable Object (the default everywhere) |
+| `?room=ABC123&t=peerjs` | PeerJS / WebRTC, peer to peer (opt-in) |
 
-Everyone in a room must use the same transport. Invite links carry the choice. If WebRTC can't connect, the error banner links to the relay version of the room.
+Everyone in a room must use the same transport. Invite links carry the choice. The relay became the default on 2026-10-24: with no TURN server, phone remotes on some networks never connected over WebRTC, even on the same Wi-Fi. If a forced WebRTC room can't connect, the error banner links to the relay version of the room.
 
 Add `&debug` to expose `window.dice` and turn on PeerJS logging.
 

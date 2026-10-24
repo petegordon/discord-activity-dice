@@ -108,7 +108,7 @@ https://dice.housetandem.com/remote?room=<roomId>&t=<relay|peerjs>#k=<remoteKey>
 
 - **Origin:** always the public origin (`PUBLIC_ORIGIN`, from the build env, default `https://dice.housetandem.com`). Inside Discord, `location.origin` is `*.discordsays.com`, which a phone browser can't use.
 - **Key in the fragment:** it is never sent in an HTTP request and never logged by Cloudflare. The remote page reads it, stores it in `sessionStorage` (so a refresh survives), and strips it from the URL with `history.replaceState`.
-- **Transport:** comes from the table. Discord rooms are always `relay`. Standalone rooms are usually `peerjs`.
+- **Transport:** comes from the table. Rooms are `relay` unless the table was opened with `?t=peerjs`.
 
 ### 4.3 Binding (host-authoritative)
 
