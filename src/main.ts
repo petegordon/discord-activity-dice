@@ -1,5 +1,6 @@
 import "./style.css";
 import { renderSVG } from "uqr";
+import { ACHIEVEMENT_BY_ID } from "./achievements/defs";
 import { DiceAudio } from "./audio";
 import { planRoll } from "./dice/plan";
 import { preparePlayback } from "./dice/roller";
@@ -16,6 +17,7 @@ import type { Transport } from "./net/transport";
 import { startDiscord, type DiscordSession } from "./platform/discord";
 import { apiBase, debug, inDiscord, transportChoice } from "./platform/env";
 import { inviteLink, standaloneRoom, storedName, storeName } from "./platform/identity";
+import { beginSignIn, signOut, webSession, type HtSession } from "./platform/houseTandem";
 import { newIdentity } from "./net/identityKey";
 import { remoteLink } from "./remote/link";
 import { DiceScene } from "./render/scene";
@@ -72,6 +74,13 @@ async function boot() {
       remoteOpenHere: () => {
         if (remote) void discord?.openExternal(remoteLink(roomId, transportKind, remote.key)).catch(() => {});
       },
+      signIn: () => {
+        beginSignIn().catch((e: Error) => ui.hint(e.message));
+      },
+      signOut: () => {
+        signOut();
+        location.reload();
+      },
     },
     audio.muted,
   );
@@ -81,6 +90,7 @@ async function boot() {
 
   // ---- identity & room ----
   let self: Self;
+  let ht: HtSession | null = null;
   if (inDiscord) {
     try {
       discord = await startDiscord();
@@ -91,9 +101,16 @@ async function boot() {
     }
   } else {
     roomId = standaloneRoom();
-    const name = storedName() ?? (await ui.askName(""));
-    storeName(name);
-    self = { ...(await newIdentity()), name };
+    // Signed in with House Tandem: achievements are saved to that account (relay rooms only).
+    ht = transportKind === "relay" ? await webSession() : null;
+    let name: string;
+    if (ht) name = ht.user.name;
+    else {
+      name = storedName() ?? (await ui.askName(""));
+      storeName(name);
+    }
+    self = { ...(await newIdentity()), name, avatarUrl: ht?.user.avatar };
+    if (transportKind === "relay") ui.showAccount(ht ? { signedIn: true, name: ht.user.name, avatar: ht.user.avatar } : { signedIn: false });
   }
   ui.removeNamePrompt(); // no-op if already gone; see removeNamePrompt
   ui.setRoom(roomId, !inDiscord);
@@ -102,7 +119,7 @@ async function boot() {
 
   ui.status({ kind: "connecting" });
   const transport: Transport =
-    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase, { ticket: self.ticket })
+    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase, { ticket: self.ticket, ht: ht?.token })
       : new PeerJsTransport(roomId, self.id, self.key, await peerOptions());
   room = new Room(transport, self, (rollId, shooter, input) => planRoll(rollId, shooter, input));
   const r = room;
@@ -116,6 +133,17 @@ async function boot() {
   let rolling = false;
   let cooling = false;
   let awaitingAck: ReturnType<typeof setTimeout> | undefined;
+  /** Achievement toasts wait until the dice land, so they never spoil a roll. */
+  let toastQueue: { playerId: string; ids: string[] }[] = [];
+  const flushToasts = () => {
+    for (const { playerId, ids } of toastQueue) {
+      for (const id of ids) {
+        const def = ACHIEVEMENT_BY_ID.get(id);
+        if (def) ui.achievement(def.icon, def.name, playerId === self.id ? null : (playerById(playerId)?.name ?? "Someone"));
+      }
+    }
+    toastQueue = [];
+  };
 
   const playerById = (id: string | null) => players.find((p) => p.id === id);
   const myTurn = () => shown.phase === "awaitingThrow" && shown.shooterId === self.id && !rolling && !cooling && awaitingAck === undefined;
@@ -167,7 +195,7 @@ async function boot() {
   }
 
   function refresh() {
-    ui.render({ players, game: shown, selfId: self.id, hostId: r.hostId, isHost: r.isHost });
+    ui.render({ players, game: shown, selfId: self.id, hostId: r.ownerId, isHost: r.canControl });
     const shooter = playerById(shown.shooterId);
     const mine = myTurn();
     // No motion here: the cup is hidden and the phone (or Quick roll) throws.
@@ -252,6 +280,12 @@ async function boot() {
     }, AFTER_LANDING_MS);
     const record = game.lastRoll;
     if (record) ui.announceRoll(record, shooter, playerById(game.shooterId), self.id, game.phase === "matchOver");
+    setTimeout(() => !rolling && flushToasts(), 900);
+  });
+
+  r.on("achievement", (playerId, ids) => {
+    toastQueue.push({ playerId, ids });
+    if (!rolling) setTimeout(() => !rolling && flushToasts(), 900);
   });
 
   r.on("shake", (_from, intensity) => {

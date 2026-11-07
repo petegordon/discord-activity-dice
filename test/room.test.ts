@@ -168,3 +168,65 @@ describe("RelayTransport", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("relay rooms run by the server", () => {
+  it("a relay saying server:true is the host: the first player is never host, and the ht session goes in the URL", async () => {
+    class Sock {
+      static OPEN = 1;
+      static last: Sock;
+      readyState = 0;
+      onopen?: () => void;
+      onmessage?: (e: { data: string }) => void;
+      onclose?: () => void;
+      constructor(public url: string) {
+        Sock.last = this;
+      }
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", Sock);
+    vi.stubGlobal("location", { href: "https://dice.example/" });
+    const relay = new RelayTransport("ROOM", "a", "key", "/api", { ht: "tok" });
+    const changes: boolean[] = [];
+    relay.on("host-change", (h) => changes.push(h));
+    const connected = relay.connect();
+    expect(Sock.last.url).toContain("ht=tok");
+    Sock.last.readyState = 1;
+    Sock.last.onopen?.();
+    Sock.last.onmessage?.({ data: JSON.stringify({ type: "peers", server: true, ids: ["a", "b"], remotes: [] }) });
+    await connected;
+    expect(relay.isHost).toBe(false);
+    expect(relay.serverHosted).toBe(true);
+    expect(changes).toEqual([false]);
+    relay.close();
+    vi.unstubAllGlobals();
+  });
+
+  it("the earliest player controls the table and asks the server to start and rematch", () => {
+    const t = new FakeTransport();
+    (t as unknown as { serverHosted: boolean }).serverHosted = true;
+    const room = new Room(t, self("a"), plan);
+    t.events.emit("host-change", false);
+    expect(t.sent.at(-1)?.msg.t).toBe("hello");
+    const state: Msg = {
+      t: "state",
+      hostId: "server",
+      game: createGame(),
+      players: [
+        { id: "a", name: "A", color: "#000", joinedAt: 1 },
+        { id: "b", name: "B", color: "#111", joinedAt: 2 },
+      ],
+    };
+    t.events.emit("message", { from: "server", to: "all", msg: state });
+    expect(room.ownerId).toBe("a");
+    expect(room.canControl).toBe(true);
+    room.start(21);
+    expect(t.sent.at(-1)).toEqual({ msg: { t: "start", target: 21 }, to: "host" });
+    room.rematch();
+    expect(t.sent.at(-1)).toEqual({ msg: { t: "rematch" }, to: "host" });
+    const seen: string[][] = [];
+    room.on("achievement", (_p, ids) => seen.push(ids));
+    t.events.emit("message", { from: "server", to: "all", msg: { t: "achievement", playerId: "a", ids: ["boxcars"] } });
+    expect(seen).toEqual([["boxcars"]]);
+  });
+});

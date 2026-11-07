@@ -32,6 +32,8 @@
       <ul id="players" class="players" aria-label="Players"></ul>
       <div id="banner" class="banner" aria-live="polite"></div>
 
+      <div id="toasts" class="toasts" aria-live="polite"></div>
+
       <div id="callout" class="callout" aria-live="assertive">
         <div class="callout-main"></div>
         <div class="callout-sub"></div>
@@ -65,6 +67,11 @@
           </div>
           <p id="lobby-wait" class="muted">Waiting for the host to start…</p>
           <button id="lobby-phone" class="secondary" type="button" hidden>📱 Roll with your phone</button>
+          <div id="ht-account" class="ht-account" hidden>
+            <span id="ht-account-text"></span>
+            <button id="ht-signin" class="chip-btn ht-discord" type="button" hidden>Sign in with Discord</button>
+            <button id="ht-signout" class="chip-btn" type="button" hidden>Sign out</button>
+          </div>
           <p id="legal-links" class="legal"><a href="/terms" target="_blank" rel="noopener">Terms</a> · <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
         </div>
       </section>
@@ -85,6 +92,9 @@
           <label for="name-input">Your name</label>
           <input id="name-input" maxlength="24" autocomplete="nickname" required />
           <button class="primary" type="submit">Join table</button>
+          <p class="muted or">or</p>
+          <button id="name-signin" class="secondary ht-discord" type="button">Sign in with Discord</button>
+          <p class="muted small">Signed in, your achievements are saved to your House Tandem account.</p>
         </form>
       </section>
 

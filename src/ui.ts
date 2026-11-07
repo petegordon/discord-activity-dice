@@ -35,7 +35,13 @@ export type UIHandlers = {
   remoteOpenHere: () => void;
   remoteNewLink: () => void;
   remoteUnpair: () => void;
+  /** Standalone web: sign in with Discord through House Tandem / sign out. */
+  signIn: () => void;
+  signOut: () => void;
 };
+
+/** The lobby's account line on the standalone web version. */
+export type AccountView = { signedIn: false } | { signedIn: true; name: string; avatar?: string };
 
 /** The pairing sheet's contents. See SHAKER-REMOTE.md §2.1. */
 export type PairView = {
@@ -104,6 +110,43 @@ export class UI {
     $("pair-close").addEventListener("click", () => this.hidePair());
     $("pair").addEventListener("click", (e) => e.target === $("pair") && this.hidePair());
     $("pair-copy").addEventListener("click", () => this.copyPairLink());
+    $("ht-signin").addEventListener("click", () => handlers.signIn());
+    $("ht-signout").addEventListener("click", () => handlers.signOut());
+    document.getElementById("name-signin")?.addEventListener("click", () => handlers.signIn());
+  }
+
+  /** Standalone web only: who's signed in, or the button to sign in. */
+  showAccount(v: AccountView | null) {
+    const box = $("ht-account");
+    box.hidden = !v;
+    if (!v) return;
+    const text = $("ht-account-text");
+    text.replaceChildren();
+    if (v.signedIn) {
+      if (v.avatar) {
+        const img = document.createElement("img");
+        img.src = v.avatar;
+        img.alt = "";
+        img.referrerPolicy = "no-referrer";
+        text.append(img, " ");
+      }
+      text.append(`Signed in as ${v.name}`);
+    } else {
+      text.textContent = "Sign in to save achievements";
+    }
+    $("ht-signin").hidden = v.signedIn;
+    $("ht-signout").hidden = !v.signedIn;
+  }
+
+  /** An achievement just saved to someone's House Tandem account. */
+  achievement(icon: string, name: string, who: string | null) {
+    const t = el("div", { className: "toast" });
+    t.append(
+      el("span", { className: "toast-icon", text: icon }),
+      el("div", {}, el("div", { className: "toast-title", text: who ? `${who} · Achievement` : "Achievement unlocked" }), el("div", { className: "toast-name", text: name })),
+    );
+    $("toasts").append(t);
+    setTimeout(() => t.remove(), 4200);
   }
 
   askName(initial: string): Promise<string> {

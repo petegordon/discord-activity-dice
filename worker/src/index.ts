@@ -1,15 +1,20 @@
 import { DurableObject } from "cloudflare:workers";
+import { ACHIEVEMENTS } from "../../src/achievements/defs";
+import { planRoll } from "../../src/dice/plan";
 import { verifyPlayerKey } from "../../src/net/identityKey";
-import { CLIENT_BROADCASTS } from "../../src/net/protocol";
+import { CLIENT_BROADCASTS, isEnvelope, SERVER_ID, type Msg } from "../../src/net/protocol";
 import { splitPeers, type Attachment } from "./peers";
-import { DISCORD_ROOM_RE, discordRoom, roomTicket, verifyRoomTicket } from "./roomTicket";
+import { DISCORD_ROOM_RE, discordRoom, readRoomTicket, roomTicket } from "./roomTicket";
 import { RANGED_RE, withRanges } from "./ranges";
+import { TableServer, type HouseTandem, type Saved } from "./table";
 
 export interface Env {
   RELAY: DurableObjectNamespace<RelayRoom>;
   ASSETS: Fetcher;
   DISCORD_CLIENT_ID: string;
   DISCORD_CLIENT_SECRET?: string;
+  /** The House Tandem account service over RPC (wrangler.jsonc `services`). Without it, everyone is a guest. */
+  HT?: HouseTandem;
   /** Optional Cloudflare Realtime TURN key, for NAT traversal of the PeerJS transport. */
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
@@ -20,6 +25,8 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_MESSAGE_BYTES = 64 * 1024;
 /** Players plus their shaker remotes. */
 const MAX_SOCKETS_PER_ROOM = 48;
+/** Set by this Worker (never by the client) for a verified House Tandem account. */
+const USER_HEADER = "x-ht-user";
 /** Clients ping every 5s; a socket silent for this long is treated as dead (half-open TCP). */
 const STALE_MS = 16_000;
 /** Shakes are cosmetic; relay at most one per this interval per socket. */
@@ -37,6 +44,12 @@ export default {
 
     if (url.pathname === "/api/token" && req.method === "POST") return exchangeToken(req, env);
     if (url.pathname === "/api/ice" && req.method === "GET") return iceServers(req, env);
+    // housetandem.com renders the dice card on the account page from this.
+    if (url.pathname === "/api/achievements" && req.method === "GET") {
+      return new Response(JSON.stringify({ game: "dice", achievements: ACHIEVEMENTS }), {
+        headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "public, max-age=300" },
+      });
+    }
 
     const relay = url.pathname.match(/^\/api\/relay\/([^/]+)$/);
     if (relay) {
@@ -52,12 +65,19 @@ export default {
       if (!(await verifyPlayerKey(id, url.searchParams.get("key")))) return json({ error: "bad key" }, 403);
       // Players in a Discord room need the ticket from /api/token. Remotes don't: the host ignores any remote nobody paired.
       const role = url.searchParams.get("role") === "remote" ? "remote" : "player";
+      let userId: string | undefined;
       if (role === "player" && DISCORD_ROOM_RE.test(room)) {
-        const ok = !!env.DISCORD_CLIENT_SECRET && (await verifyRoomTicket(env.DISCORD_CLIENT_SECRET, room, id, url.searchParams.get("ticket")));
-        if (!ok) return json({ error: "bad ticket" }, 403);
+        const t = env.DISCORD_CLIENT_SECRET ? await readRoomTicket(env.DISCORD_CLIENT_SECRET, room, id, url.searchParams.get("ticket")) : { ok: false };
+        if (!t.ok) return json({ error: "bad ticket" }, 403);
+        userId = t.userId;
+      } else if (role === "player" && url.searchParams.get("ht")) {
+        userId = await verifyWebSession(env, url.searchParams.get("ht")!);
       }
       if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected websocket" }, 426);
-      return env.RELAY.get(env.RELAY.idFromName(room)).fetch(req);
+      const headers = new Headers(req.headers);
+      headers.delete(USER_HEADER);
+      if (userId) headers.set(USER_HEADER, userId);
+      return env.RELAY.get(env.RELAY.idFromName(room)).fetch(new Request(req, { headers }));
     }
 
     if (url.pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
@@ -65,6 +85,39 @@ export default {
     return env.ASSETS.fetch(req);
   },
 } satisfies ExportedHandler<Env>;
+
+/** A House Tandem web session, checked by the account service. Undefined = guest. */
+async function verifyWebSession(env: Env, token: string): Promise<string | undefined> {
+  if (!env.HT || token.length > 4096) return undefined;
+  try {
+    const user = await env.HT.verifySession(token);
+    return user ? String(user.userId) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Who this access token belongs to (verified with Discord, not taken from the
+ * client), and their House Tandem account. Undefined if either is unavailable.
+ */
+async function houseTandemAccount(env: Env, accessToken: string): Promise<string | undefined> {
+  if (!env.HT) return undefined;
+  try {
+    const res = await fetch("https://discord.com/api/users/@me", { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) return undefined;
+    const me = (await res.json()) as { id?: string; username?: string; global_name?: string | null; avatar?: string | null };
+    if (!me.id || !/^[0-9]{1,20}$/.test(me.id)) return undefined;
+    const avatar = me.avatar
+      ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png?size=128`
+      : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(me.id) >> 22n) % 6n)}.png`;
+    const account = await env.HT.resolveDiscord({ discordId: me.id, name: me.global_name || me.username || "Player", avatar });
+    const userId = String(account.userId);
+    return /^[0-9]{1,20}$/.test(userId) ? userId : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Discord Embedded App SDK: swap the authorize() code for an access token. */
 async function exchangeToken(req: Request, env: Env): Promise<Response> {
@@ -100,7 +153,8 @@ async function exchangeToken(req: Request, env: Env): Promise<Response> {
     return json({ access_token });
   }
   const room = await discordRoom(env.DISCORD_CLIENT_SECRET, instanceId);
-  return json({ access_token, room, ticket: await roomTicket(env.DISCORD_CLIENT_SECRET, room, playerId) });
+  const userId = await houseTandemAccount(env, access_token);
+  return json({ access_token, room, ticket: await roomTicket(env.DISCORD_CLIENT_SECRET, room, playerId, userId), signedIn: !!userId });
 }
 
 /**
@@ -133,21 +187,36 @@ async function iceServers(req: Request, env: Env): Promise<Response> {
 }
 
 /**
- * One instance per room. Relays envelopes between sockets and tells everyone
- * the connection order; the earliest player connection is the host. Shaker
- * remotes are relayed like players but are never host. Uses the
- * hibernation API so idle rooms cost nothing.
+ * One instance per room, and the room's host: it runs the game (TableServer),
+ * so the dice are picked here and no browser can fake a roll or a win. It
+ * relays shakes between sockets and tells everyone who's connected. Shaker
+ * remotes act for the player who paired them. Uses the hibernation API; the
+ * game is saved to storage so an evicted room picks up where it left off.
  */
 export class RelayRoom extends DurableObject<Env> {
+  private table: TableServer;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    this.table = new TableServer({
+      plan: (rollId, shooter, input) => planRoll(rollId, shooter, input),
+      broadcast: (msgs) => this.broadcast(msgs),
+      save: (s) => void ctx.storage.put("table", s).catch(() => {}),
+      ht: env.HT,
+      wait: (p) => ctx.waitUntil(p),
+      log: (m, e) => console.warn(m, e instanceof Error ? e.message : e),
+    });
+    ctx.blockConcurrencyWhile(async () => {
+      this.table.restore(await ctx.storage.get<Saved>("table"));
+    });
   }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const id = url.searchParams.get("id")!;
     const role = url.searchParams.get("role") === "remote" ? "remote" : "player";
+    const userId = role === "player" ? (req.headers.get(USER_HEADER) ?? undefined) : undefined;
     // A reconnecting player replaces their old socket.
     for (const ws of this.ctx.getWebSockets(id)) ws.close(4000, "replaced");
     if (this.sockets().length >= MAX_SOCKETS_PER_ROOM) return json({ error: "room full" }, 429);
@@ -155,40 +224,41 @@ export class RelayRoom extends DurableObject<Env> {
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, [id]);
     const joinedAt = Math.max(Date.now(), ...this.sockets().map((s) => s.att.joinedAt + 1));
-    server.serializeAttachment({ id, joinedAt, role } satisfies Attachment);
-    this.broadcastPeers();
+    server.serializeAttachment({ id, joinedAt, role, ...(userId ? { userId } : {}) } satisfies Attachment);
+    this.presenceChanged();
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
     if (typeof data !== "string" || data.length > MAX_MESSAGE_BYTES) return;
-    let parsed: { to?: unknown; msg?: { t?: unknown } };
+    let parsed: unknown;
     try {
       parsed = JSON.parse(data);
     } catch {
       return;
     }
-    const { to, msg } = parsed;
-    if ((to !== "host" && to !== "all") || !msg || typeof msg.t !== "string") return;
-
     const sender = ws.deserializeAttachment() as Attachment;
+    if (!sender) return;
+    const env = { ...(parsed as object), from: sender.id };
+    if (!isEnvelope(env)) return;
+    const { to, msg } = env;
+
     if (msg.t === "shake") {
       const now = Date.now();
       if (now - (sender.lastShake ?? 0) < SHAKE_MIN_INTERVAL_MS) return;
       ws.serializeAttachment({ ...sender, lastShake: now } satisfies Attachment);
     }
     this.evictStale();
-    const ordered = this.sockets();
-    const host = splitPeers(ordered).players[0];
-    if (!host) return;
-    const out = JSON.stringify({ type: "env", env: { from: sender.id, to, msg, ...(sender.role === "remote" ? { remote: true } : {}) } });
 
     if (to === "host") {
-      if (host.ws !== ws) host.ws.send(out);
+      const remote = sender.role === "remote";
+      this.table.handle({ id: sender.id, role: remote ? "remote" : "player", userId: sender.userId }, msg, remote);
       return;
     }
-    if (host.ws !== ws && !CLIENT_BROADCASTS.has(msg.t)) return;
-    for (const s of ordered) if (s.ws !== ws) s.ws.send(out);
+    // Players may only broadcast shakes; everything else comes from the room itself.
+    if (!CLIENT_BROADCASTS.has(msg.t)) return;
+    const out = JSON.stringify({ type: "env", env: { from: sender.id, to: "all", msg, ...(sender.role === "remote" ? { remote: true } : {}) } });
+    for (const s of this.sockets()) if (s.ws !== ws) s.ws.send(out);
   }
 
   async webSocketClose(ws: WebSocket, code: number) {
@@ -197,17 +267,36 @@ export class RelayRoom extends DurableObject<Env> {
     } catch {
       // already closed
     }
-    this.broadcastPeers(ws);
+    this.presenceChanged(ws);
   }
 
   async webSocketError(ws: WebSocket) {
-    this.broadcastPeers(ws);
+    this.presenceChanged(ws);
+  }
+
+  /** Drop players who stayed away; look for dead sockets while anyone is here. */
+  async alarm() {
+    this.evictStale();
+    this.table.connected(this.conns());
+    this.table.prune();
+    this.scheduleAlarm();
+  }
+
+  private presenceChanged(exclude?: WebSocket) {
+    this.broadcastPeers(exclude);
+    this.table.connected(this.conns(exclude));
+    this.scheduleAlarm();
+  }
+
+  private scheduleAlarm() {
+    const due = [this.table.nextPruneAt(), this.sockets().length ? Date.now() + STALE_MS : null].filter((t): t is number => t !== null);
+    if (due.length) void this.ctx.storage.setAlarm(Math.max(Date.now() + 250, Math.min(...due)));
   }
 
   /**
-   * A host whose connection died without a close (phone locked, network gone)
-   * would otherwise keep swallowing every "host" message until the runtime
-   * notices. Clients ping every 5s, so silence means it's gone.
+   * A connection that died without a close (phone locked, network gone)
+   * would otherwise count as present forever. Clients ping every 5s, so
+   * silence means it's gone.
    */
   private evictStale() {
     const now = Date.now();
@@ -219,7 +308,7 @@ export class RelayRoom extends DurableObject<Env> {
         evicted = true;
       }
     }
-    if (evicted) this.broadcastPeers();
+    if (evicted) this.presenceChanged();
   }
 
   private sockets(exclude?: WebSocket) {
@@ -231,11 +320,24 @@ export class RelayRoom extends DurableObject<Env> {
       .sort((a, b) => a.att.joinedAt - b.att.joinedAt || a.att.id.localeCompare(b.att.id));
   }
 
-  /** `ids`: players in connection order, so ids[0] is host. `remotes`: shaker remotes. */
+  private conns(exclude?: WebSocket) {
+    return this.sockets(exclude).map((s) => ({ id: s.att.id, role: s.att.role === "remote" ? ("remote" as const) : ("player" as const), userId: s.att.userId }));
+  }
+
+  /** The room's own messages (state, rolls, achievements) go to every socket. */
+  private broadcast(msgs: Msg[]) {
+    const sockets = this.sockets();
+    for (const msg of msgs) {
+      const out = JSON.stringify({ type: "env", env: { from: SERVER_ID, to: "all", msg } });
+      for (const s of sockets) s.ws.send(out);
+    }
+  }
+
+  /** `server: true`: this room is the host. `ids`: players in connection order; `remotes`: shaker remotes. */
   private broadcastPeers(exclude?: WebSocket) {
     const sockets = this.sockets(exclude);
     const { players, remotes } = splitPeers(sockets);
-    const out = JSON.stringify({ type: "peers", ids: players.map((s) => s.att.id), remotes: remotes.map((s) => s.att.id) });
+    const out = JSON.stringify({ type: "peers", server: true, ids: players.map((s) => s.att.id), remotes: remotes.map((s) => s.att.id) });
     for (const s of sockets) s.ws.send(out);
   }
 }
