@@ -26,6 +26,8 @@ export type TransportStatus =
 export interface Transport {
   readonly kind: TransportKind;
   readonly isHost: boolean;
+  /** The transport itself runs the game (the relay's Durable Object); players only send requests. */
+  readonly serverHosted?: boolean;
   connect(): Promise<void>;
   send(msg: Msg, to: Target): void;
   on<K extends keyof TransportEvents>(event: K, cb: TransportEvents[K]): void;

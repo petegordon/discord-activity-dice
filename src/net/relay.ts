@@ -1,4 +1,4 @@
-import { isEnvelope, type Msg, type Role, type Target } from "./protocol";
+import { isEnvelope, SERVER_ID, type Msg, type Role, type Target } from "./protocol";
 import { Emitter, type Transport, type TransportEvents } from "./transport";
 
 /** Also how the relay spots a dead host: see STALE_MS in the Worker. */
@@ -10,15 +10,20 @@ export type RelayOptions = {
   role?: Role;
   /** Required for players in Discord rooms (worker/src/roomTicket.ts). */
   ticket?: string;
+  /** A House Tandem session (web sign-in); the relay checks it and credits achievements to that account. */
+  ht?: string;
 };
 
 /**
  * WebSocket transport through a Cloudflare Durable Object (worker/src/index.ts).
- * The relay orders player connections by arrival; the earliest one is host.
+ * A relay that says `server: true` is itself the host (it runs the game); an
+ * older relay makes the earliest player connection host.
  */
 export class RelayTransport implements Transport {
   readonly kind = "relay";
   isHost = false;
+  /** The relay runs the game; no player is ever host. */
+  serverHosted = false;
   private ws: WebSocket | null = null;
   private hostId: string | null = null;
   private events = new Emitter<TransportEvents>();
@@ -53,6 +58,7 @@ export class RelayTransport implements Transport {
     base.searchParams.set("key", this.key);
     if (this.options.role === "remote") base.searchParams.set("role", "remote");
     if (this.options.ticket) base.searchParams.set("ticket", this.options.ticket);
+    if (this.options.ht) base.searchParams.set("ht", this.options.ht);
     return base.toString();
   }
 
@@ -77,9 +83,10 @@ export class RelayTransport implements Transport {
       } catch {
         return;
       }
-      const d = data as { type?: string; ids?: unknown; remotes?: unknown; env?: unknown };
+      const d = data as { type?: string; ids?: unknown; remotes?: unknown; env?: unknown; server?: unknown };
       if (d.type === "peers" && Array.isArray(d.ids)) {
         const strings = (xs: unknown) => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string") : []);
+        this.serverHosted = d.server === true;
         this.onPeers(strings(d.ids), strings(d.remotes));
         if (!this.connectedOnce) {
           this.connectedOnce = true;
@@ -107,8 +114,8 @@ export class RelayTransport implements Transport {
 
   /** `ids` are players in connection order (the first is host); `remotes` are shaker remotes. */
   private onPeers(ids: string[], remotes: string[]) {
-    const hostId = ids[0] ?? null;
-    const isHost = hostId === this.selfId;
+    const hostId = this.serverHosted ? SERVER_ID : (ids[0] ?? null);
+    const isHost = !this.serverHosted && hostId === this.selfId;
     // After a reconnect the host may well be unchanged, but it may have dropped
     // us meanwhile, so re-announce ourselves either way.
     const changed = hostId !== this.hostId || this.fresh;

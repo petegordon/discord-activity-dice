@@ -66,6 +66,11 @@ export class HostAuthority {
     this.busyUntil = 0;
   }
 
+  /** The earliest-joined player runs the table: starts matches and rematches. */
+  owner(): string | null {
+    return [...this.players].sort((a, b) => a.joinedAt - b.joinedAt)[0]?.id ?? null;
+  }
+
   state(): Msg {
     return { t: "state", players: this.players, game: this.game, hostId: this.deps.selfId };
   }
@@ -182,6 +187,10 @@ export class HostAuthority {
         return this.pair(from, msg.remoteId);
       case "unpair":
         return this.unpair(from);
+      case "start":
+        return from === this.owner() ? this.start(Number(msg.target)) : [];
+      case "rematch":
+        return from === this.owner() ? this.rematch() : [];
       default:
         return [];
     }

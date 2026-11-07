@@ -1,4 +1,4 @@
-export type Attachment = { id: string; joinedAt: number; lastShake?: number; role?: "player" | "remote" };
+export type Attachment = { id: string; joinedAt: number; lastShake?: number; role?: "player" | "remote"; userId?: string };
 
 /**
  * Connection order decides the host: the earliest *player*. Shaker remotes

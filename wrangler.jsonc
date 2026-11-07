@@ -17,6 +17,9 @@
     "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }],
+  // The House Tandem account service (Tandemonium's API Worker): verifies sign-ins and saves
+  // dice achievements, over a private RPC binding (no shared secret). See worker/src/table.ts.
+  "services": [{ "binding": "HT", "service": "tandemonium-api", "entrypoint": "HouseTandemGames" }],
   // Also serve on <name>.<subdomain>.workers.dev, which works before the custom domain is set up.
   "workers_dev": true,
   "routes": [{ "pattern": "dice.housetandem.com", "custom_domain": true }],

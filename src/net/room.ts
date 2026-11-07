@@ -15,6 +15,8 @@ export type RoomEvents = {
   shake: (from: string, intensity: number) => void;
   status: (status: TransportStatus) => void;
   role: (isHost: boolean) => void;
+  /** Achievements just saved to a player's House Tandem account (relay rooms only). */
+  achievement: (playerId: string, ids: string[]) => void;
 };
 
 /**
@@ -61,6 +63,22 @@ export class Room {
     return this.authority !== null;
   }
 
+  /** The relay runs the game (see SERVER_ID). */
+  get serverHosted() {
+    return this.transport.serverHosted === true;
+  }
+
+  /** Who runs the table: the host, or in relay rooms the earliest-joined player. */
+  get ownerId(): string | null {
+    if (!this.serverHosted) return this.hostId;
+    return [...this.players].sort((a, b) => a.joinedAt - b.joinedAt)[0]?.id ?? null;
+  }
+
+  /** We may start matches and rematches. */
+  get canControl() {
+    return this.isHost || (this.serverHosted && this.ownerId === this.self.id);
+  }
+
   get transportKind() {
     return this.transport.kind;
   }
@@ -80,10 +98,12 @@ export class Room {
 
   start(target: number) {
     if (this.authority) this.broadcast(this.authority.start(target));
+    else if (this.serverHosted) this.transport.send({ t: "start", target }, "host");
   }
 
   rematch() {
     if (this.authority) this.broadcast(this.authority.rematch());
+    else if (this.serverHosted) this.transport.send({ t: "rematch" }, "host");
   }
 
   throwDice(input: ThrowInput) {
@@ -133,6 +153,8 @@ export class Room {
     } else if (msg.t === "roll") {
       this.game = msg.game;
       this.events.emit("roll", msg.plan, msg.game, msg.landsInMs);
+    } else if (msg.t === "achievement" && Array.isArray(msg.ids)) {
+      this.events.emit("achievement", String(msg.playerId), msg.ids.filter((x): x is string => typeof x === "string"));
     }
   }
 

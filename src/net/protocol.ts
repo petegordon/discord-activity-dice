@@ -50,7 +50,13 @@ export type Msg =
   /** player → host: forget my shaker remote */
   | { t: "unpair" }
   /** remote → host, on (re)connect: please send the current state */
-  | { t: "remote-hello" };
+  | { t: "remote-hello" }
+  /** table owner → server host (relay rooms): start a match */
+  | { t: "start"; target: number }
+  /** table owner → server host (relay rooms): back to the lobby after a match */
+  | { t: "rematch" }
+  /** server host → all: these achievements were just saved to that player's House Tandem account */
+  | { t: "achievement"; playerId: string; ids: string[] };
 
 export type Target = "host" | "all";
 
@@ -63,7 +69,13 @@ export type Envelope = { from: string; to: Target; msg: Msg; remote?: boolean };
 /** The only message type a non-host may broadcast; transports drop the rest. */
 export const CLIENT_BROADCASTS: ReadonlySet<string> = new Set(["shake"]);
 
-const MSG_TYPES = new Set(["hello", "state", "shake", "throw", "roll", "pair", "unpair", "remote-hello"]);
+const MSG_TYPES = new Set(["hello", "state", "shake", "throw", "roll", "pair", "unpair", "remote-hello", "start", "rematch", "achievement"]);
+
+/**
+ * In relay rooms the Durable Object is the host (it picks the dice and keeps
+ * score), so a tampered browser can't fake a roll. Its messages come from this id.
+ */
+export const SERVER_ID = "server";
 
 export type Role = "player" | "remote";
 
