@@ -9,6 +9,8 @@ export type DiscordSession = {
   /** Opens a URL in the system browser, after Discord's own confirmation. */
   openExternal: (url: string) => Promise<void>;
   mobile: boolean;
+  /** The Worker found (or made) a House Tandem account for this Discord user, so achievements and time in game count. */
+  signedIn: boolean;
 };
 
 /**
@@ -43,7 +45,7 @@ export async function startDiscord(): Promise<DiscordSession> {
   });
   if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
   // `room` and `ticket` admit us to this instance's relay room (worker/src/roomTicket.ts).
-  const { access_token, room, ticket } = (await res.json()) as { access_token: string; room?: string; ticket?: string };
+  const { access_token, room, ticket, signedIn } = (await res.json()) as { access_token: string; room?: string; ticket?: string; signedIn?: boolean };
   const { user } = await sdk.commands.authenticate({ access_token });
 
   const avatarUrl = user.avatar
@@ -57,5 +59,6 @@ export async function startDiscord(): Promise<DiscordSession> {
       await sdk.commands.openExternalLink({ url });
     },
     mobile: String(sdk.platform) === "mobile",
+    signedIn: signedIn === true && !!ticket,
   };
 }

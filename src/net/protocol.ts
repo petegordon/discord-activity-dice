@@ -56,7 +56,9 @@ export type Msg =
   /** table owner → server host (relay rooms): back to the lobby after a match */
   | { t: "rematch" }
   /** server host → all: these achievements were just saved to that player's House Tandem account */
-  | { t: "achievement"; playerId: string; ids: string[] };
+  | { t: "achievement"; playerId: string; ids: string[] }
+  /** signed-in player → server host (relay rooms): `s` more seconds of active play (a delta, never a total) */
+  | { t: "playtime"; s: number };
 
 export type Target = "host" | "all";
 
@@ -69,7 +71,7 @@ export type Envelope = { from: string; to: Target; msg: Msg; remote?: boolean };
 /** The only message type a non-host may broadcast; transports drop the rest. */
 export const CLIENT_BROADCASTS: ReadonlySet<string> = new Set(["shake"]);
 
-const MSG_TYPES = new Set(["hello", "state", "shake", "throw", "roll", "pair", "unpair", "remote-hello", "start", "rematch", "achievement"]);
+const MSG_TYPES = new Set(["hello", "state", "shake", "throw", "roll", "pair", "unpair", "remote-hello", "start", "rematch", "achievement", "playtime"]);
 
 /**
  * In relay rooms the Durable Object is the host (it picks the dice and keeps
