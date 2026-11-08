@@ -7,12 +7,14 @@ import { RECONNECT_GRACE_MS, TableServer, type Conn, type HouseTandem, type Save
 
 const throwMsg = (source: "button" | "motion" = "button"): Msg => ({ t: "throw", input: { dir: [0, 1], speed: 0.5, spin: 0.5, source } });
 
-function setup(faces: Faces[] = [], opts: { ht?: boolean; profile?: { earned: string[]; stats: Record<string, unknown> } } = {}) {
+function setup(faces: Faces[] = [], opts: { ht?: boolean; profile?: { earned: string[]; stats: Record<string, unknown> }; recordPlay?: HouseTandem["recordPlay"] } = {}) {
   const now = { t: 1_000 };
   const sent: Msg[] = [];
   let saved: Saved | undefined;
   const records: { userId: string; delta: unknown; earned: string[] }[] = [];
   const pending: Promise<unknown>[] = [];
+  const plays: { userId: string | number; game: string; seconds: number }[] = [];
+  const logs: string[] = [];
   const stored = new Map<string, Set<string>>();
   const ht: HouseTandem = {
     resolveDiscord: async () => ({ userId: 1, name: "x", avatar: null }),
@@ -26,6 +28,11 @@ function setup(faces: Faces[] = [], opts: { ht?: boolean; profile?: { earned: st
       for (const id of newlyEarned) have.add(id);
       return { newlyEarned };
     },
+    recordPlay: async (userId, game, seconds) => {
+      plays.push({ userId, game, seconds });
+      if (opts.recordPlay) return opts.recordPlay(userId, game, seconds);
+      return { seconds, sessions: 1, firstPlayed: null, lastPlayed: null, added: seconds };
+    },
   };
   const plan: PlanFn = (rollId, shooter) => ({ rollId, shooter, faces: faces.shift() ?? [1, 2], bodies: [] as never, frameCount: 1 });
   const table = new TableServer({
@@ -35,11 +42,12 @@ function setup(faces: Faces[] = [], opts: { ht?: boolean; profile?: { earned: st
     save: (s) => (saved = JSON.parse(JSON.stringify(s))),
     ht: opts.ht === false ? undefined : ht,
     wait: (p) => pending.push(p),
+    log: (m) => logs.push(m),
   });
   const settle = async () => {
     while (pending.length) await pending.shift();
   };
-  return { table, now, sent, records, settle, saved: () => saved };
+  return { table, now, sent, records, plays, logs, settle, saved: () => saved };
 }
 
 const A: Conn = { id: "a", role: "player", userId: "11" };
@@ -151,5 +159,64 @@ describe("room tickets carry the account", () => {
     expect((await readRoomTicket("s3cret", "d" + "0".repeat(30), "other", t)).ok).toBe(false);
     const old = await roomTicket("s3cret", "d" + "0".repeat(30), "abcd");
     expect(await readRoomTicket("s3cret", "d" + "0".repeat(30), "abcd", old)).toEqual({ ok: true });
+  });
+});
+
+describe("time in game (housetandem-web #37)", () => {
+  const playtime = (s: unknown): Msg => ({ t: "playtime", s }) as Msg;
+
+  it("credits the socket's verified account, clamped to 1..600 whole seconds", async () => {
+    const { table, plays, sent, saved, settle } = setup();
+    table.connected([A, B]);
+    table.handle(A, hello("Ann"), false);
+    const before = { sent: sent.length, saved: JSON.stringify(saved()) };
+    table.handle(A, playtime(61.9), false);
+    table.handle(A, playtime(5_000), false);
+    await settle();
+    expect(plays).toEqual([
+      { userId: "11", game: "dice", seconds: 61 },
+      { userId: "11", game: "dice", seconds: 600 },
+    ]);
+    // Bookkeeping only: nothing broadcast, the game isn't touched.
+    expect(sent.length).toBe(before.sent);
+    expect(JSON.stringify(saved())).toBe(before.saved);
+  });
+
+  it("ignores guests, remotes, junk and missing deltas", async () => {
+    const { table, plays, settle } = setup();
+    table.connected([A, B]);
+    table.handle(B, playtime(60), false); // guest
+    table.handle({ id: "r", role: "remote", userId: "11" }, playtime(60), true); // a remote, even one claiming an account
+    table.handle(A, playtime(60), true); // flagged as a remote by the relay
+    for (const s of [0, 0.5, -10, Number.NaN, "60x", null, undefined]) table.handle(A, playtime(s), false);
+    await settle();
+    expect(plays).toEqual([]);
+  });
+
+  it("does nothing without the account service", () => {
+    const { table } = setup([], { ht: false });
+    table.connected([A]);
+    expect(() => table.handle(A, playtime(60), false)).not.toThrow();
+  });
+
+  it("a rejected or throwing recordPlay (account service not deployed yet) never breaks the game", async () => {
+    const rejecting = setup([[1, 2]], { recordPlay: async () => Promise.reject(new Error("no such method")) });
+    rejecting.table.connected([A]);
+    rejecting.table.handle(A, hello("Ann"), false);
+    rejecting.table.handle(A, playtime(60), false);
+    await expect(rejecting.settle()).resolves.toBeUndefined();
+    expect(rejecting.logs).toContain("recordPlay failed");
+    rejecting.table.handle(A, { t: "start", target: 5 }, false);
+    expect(rejecting.table.authority.game.phase).toBe("awaitingThrow");
+
+    const throwing = setup([], {
+      recordPlay: () => {
+        throw new Error("sync throw");
+      },
+    });
+    throwing.table.connected([A]);
+    expect(() => throwing.table.handle(A, playtime(60), false)).not.toThrow();
+    await throwing.settle();
+    expect(throwing.logs).toContain("recordPlay failed");
   });
 });

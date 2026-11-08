@@ -18,6 +18,7 @@ import { startDiscord, type DiscordSession } from "./platform/discord";
 import { apiBase, debug, inDiscord, transportChoice } from "./platform/env";
 import { inviteLink, standaloneRoom, storedName, storeName } from "./platform/identity";
 import { beginSignIn, signOut, webSession, type HtSession } from "./platform/houseTandem";
+import { createPlaytime } from "./platform/playtime";
 import { newIdentity } from "./net/identityKey";
 import { remoteLink } from "./remote/link";
 import { DiceScene } from "./render/scene";
@@ -30,6 +31,12 @@ const AFTER_LANDING_MS = 700;
 
 /** Don't re-send a pairing the host hasn't reflected yet more often than this. */
 const REPAIR_MS = 3_000;
+/**
+ * Time in game stops counting after this long with nothing happening: no
+ * input here and no roll or state change at the table. Watching friends roll
+ * counts (every roll is activity); a tab left open in a quiet lobby doesn't.
+ */
+const PLAYTIME_IDLE_MS = 3 * 60_000;
 
 async function boot() {
   const audio = new DiceAudio();
@@ -123,6 +130,16 @@ async function boot() {
       : new PeerJsTransport(roomId, self.id, self.key, await peerOptions());
   room = new Room(transport, self, (rollId, shooter, input) => planRoll(rollId, shooter, input));
   const r = room;
+
+  // ---- time in game (housetandem-web #37) ----
+  // Signed-in players only; the relay credits the account it verified for this socket.
+  const signedIn = inDiscord ? !!discord?.signedIn : !!ht;
+  const playtime = createPlaytime({
+    game: "dice",
+    send: (s) => r.reportPlaytime(s),
+    signedIn: () => signedIn && r.serverHosted,
+    idleMs: PLAYTIME_IDLE_MS,
+  });
 
   // ---- what's on screen ----
   // `shown` lags the room's game while dice are in the air, so scores and
@@ -231,11 +248,15 @@ async function boot() {
 
   controller = new ThrowController(ui.zone, {
     onShake: (intensity) => {
+      playtime.noteActivity();
       scene.setShake(intensity);
       audio.rattle(intensity);
       r.shake(intensity);
     },
-    onThrow: (input) => throwDice(input),
+    onThrow: (input) => {
+      playtime.noteActivity();
+      throwDice(input);
+    },
     onHint: (text) => ui.hint(text),
     onHoldChange: (holding) => {
       ui.setHolding(holding);
@@ -246,6 +267,7 @@ async function boot() {
   calibration = new CalibrationSheet(controller, (message) => ui.hint(message));
 
   r.on("state", (p, game) => {
+    playtime.noteActivity();
     players = p;
     if (!rolling) shown = game;
     keepPaired();
@@ -260,6 +282,7 @@ async function boot() {
   });
 
   r.on("roll", async (plan, game) => {
+    playtime.noteActivity();
     const seq = ++rollSeq;
     clearTimeout(awaitingAck);
     awaitingAck = undefined;
@@ -301,6 +324,8 @@ async function boot() {
 
   if (debug) Object.assign(window, { dice: { room: r, scene, self } });
   (window as { __diceLoaded?: () => void }).__diceLoaded?.(); // see public/boot-guard.js
+  // Started before the pagehide listener below, so its last report goes out before the socket closes.
+  playtime.start();
   addEventListener("pagehide", () => r.leave());
 
   try {

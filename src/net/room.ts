@@ -42,6 +42,8 @@ export class Room {
   /** Host only: players we haven't heard from on the transport, and since when. */
   private missingSince = new Map<string, number>();
   private pruneTimer: ReturnType<typeof setInterval> | undefined;
+  /** The transport's last status was "connected". */
+  private connected = false;
 
   constructor(
     private readonly transport: Transport,
@@ -53,7 +55,10 @@ export class Room {
     transport.on("message", (env) => this.onMessage(env));
     transport.on("host-change", (isHost) => this.onHostChange(isHost));
     transport.on("peers", (ids) => this.onPeers(ids));
-    transport.on("status", (s) => this.events.emit("status", s));
+    transport.on("status", (s) => {
+      this.connected = s.kind === "connected";
+      this.events.emit("status", s);
+    });
     if ("successionDelay" in transport) {
       (transport as { successionDelay: () => number }).successionDelay = () => this.successionDelay();
     }
@@ -113,6 +118,17 @@ export class Room {
 
   shake(intensity: number) {
     this.transport.send({ t: "shake", intensity }, "all");
+  }
+
+  /**
+   * Time in game (relay rooms only): tell the server `seconds` more of active
+   * play. The relay credits it to the account it verified for this socket.
+   * False if it couldn't be sent, so the caller keeps the seconds for later.
+   */
+  reportPlaytime(seconds: number): boolean {
+    if (!this.serverHosted || this.role !== "player" || !this.connected) return false;
+    this.transport.send({ t: "playtime", s: seconds }, "host");
+    return true;
   }
 
   /** Make `remoteId` our shaker remote (replacing any other). */

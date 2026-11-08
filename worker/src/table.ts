@@ -28,7 +28,16 @@ export interface HouseTandem {
   verifySession(token: string): Promise<{ userId: string | number; name: string; avatar: string | null } | null>;
   gameProfile(userId: string, game: string): Promise<{ earned: string[]; stats: Record<string, unknown> }>;
   recordGame(userId: string, game: string, delta: Delta, earned: string[]): Promise<{ newlyEarned: string[] }>;
+  /** Time in game: `seconds` is a delta of active play since the last report (housetandem-web #37). */
+  recordPlay(
+    userId: string | number,
+    game: string,
+    seconds: number,
+  ): Promise<{ seconds: number; sessions: number; firstPlayed: string | number | null; lastPlayed: string | number | null; added: number }>;
 }
+
+/** The account service caps each report at this anyway. */
+export const MAX_PLAYTIME_REPORT_S = 600;
 
 /** One connected socket. `userId` is set by the Worker after it verified a sign-in. */
 export type Conn = { id: string; role: "player" | "remote"; userId?: string };
@@ -132,6 +141,10 @@ export class TableServer {
 
   /** A request addressed to the host. */
   handle(conn: Conn, msg: Msg, remote: boolean) {
+    if (msg.t === "playtime") {
+      if (!remote) this.playtime(conn, msg.s);
+      return;
+    }
     const prev = this.authority.game;
     const msgs = this.authority.handle(conn.id, msg, remote);
     if (!msgs.length) return;
@@ -141,6 +154,27 @@ export class TableServer {
     for (const m of msgs) {
       if (m.t === "roll") this.onRoll(m.plan.shooter, prev, m.game, remote && msg.t === "throw");
     }
+  }
+
+  /**
+   * Time in game for a signed-in player. The user id is the one the Worker
+   * verified for this socket, never anything the client sent; guests and
+   * remotes count nothing. The account service caps deltas to real time.
+   */
+  private playtime(conn: Conn, s: unknown) {
+    const ht = this.deps.ht;
+    const userId = conn.role === "player" ? conn.userId : undefined;
+    const n = Math.floor(Number(s));
+    if (!ht || !userId || !Number.isFinite(n) || n < 1) return;
+    const seconds = Math.min(MAX_PLAYTIME_REPORT_S, n);
+    let work: Promise<unknown>;
+    try {
+      work = Promise.resolve(ht.recordPlay(userId, GAME, seconds)).catch((e) => this.deps.log?.("recordPlay failed", e));
+    } catch (e) {
+      this.deps.log?.("recordPlay failed", e);
+      return;
+    }
+    this.deps.wait?.(work);
   }
 
   private out(msgs: Msg[], save: boolean) {
