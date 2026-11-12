@@ -50,7 +50,7 @@ Discord doesn't let Activities read a phone's motion sensors. Its Activity ifram
 3. On your turn, shake the phone and flick it. The dice roll on the table, and the phone shows the result once they land.
 
 Notes:
-- Inside Discord on a phone, **Open on this phone** opens the link in that phone's browser.
+- Inside Discord on a phone, the sheet asks for a second phone or tablet (the same phone can't be the table and the cup); Quick roll stays as the one-phone fallback.
 - A 📱 badge next to your name shows everyone when your phone is connected.
 - **New link** makes the old one stop working, and **Unpair** stops using the phone.
 - Anyone with your link can throw for you, so don't show the code on a stream.
