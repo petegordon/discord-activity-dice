@@ -32,7 +32,6 @@ export type UIHandlers = {
   openRemote: () => void;
   /** Open the throw calibration (🎯). */
   calibrate: () => void;
-  remoteOpenHere: () => void;
   remoteNewLink: () => void;
   remoteUnpair: () => void;
   /** Standalone web: sign in with Discord through House Tandem / sign out. */
@@ -48,8 +47,6 @@ export type PairView = {
   link: string;
   qrSvg: string;
   why: string;
-  /** Show "Open on this phone" (Discord on a phone). */
-  canOpenHere: boolean;
   paired: boolean;
   online: boolean;
 };
@@ -104,7 +101,6 @@ export class UI {
     $("calibrate-btn").addEventListener("click", () => handlers.calibrate());
     $("use-phone").addEventListener("click", () => handlers.openRemote());
     $("lobby-phone").addEventListener("click", () => handlers.openRemote());
-    $("pair-open").addEventListener("click", () => handlers.remoteOpenHere());
     $("pair-new").addEventListener("click", () => handlers.remoteNewLink());
     $("pair-unpair").addEventListener("click", () => handlers.remoteUnpair());
     $("pair-close").addEventListener("click", () => this.hidePair());
@@ -324,7 +320,6 @@ export class UI {
     // uqr renders a plain <svg> of rects from our own link; nothing user-supplied.
     $("pair-qr").innerHTML = v.qrSvg;
     $("pair-link").textContent = v.link;
-    $("pair-open").hidden = !v.canOpenHere;
     $("pair-unpair").hidden = !v.paired;
     const status = $("pair-status");
     status.textContent = v.online ? "✅ Phone connected. Shake it on your turn!" : "Waiting for your phone… Scan the code with its camera.";

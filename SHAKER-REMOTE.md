@@ -28,7 +28,7 @@ A phone's own browser tab is a top-level page, so motion works there. The remote
 3. **Pressing 📱** opens the **Pair a remote** sheet:
    - A **QR code** of the remote link, generated locally (§6.4).
    - The **full link** below it in a read-only, select-all text field, plus a **Copy** button that falls back to selecting the text when the clipboard is blocked (it is in the Discord iframe).
-   - Inside Discord on **mobile**: an **Open in browser on this phone** button that calls `discordSdk.commands.openExternalLink`. Discord shows its own leave-confirmation dialog.
+   - Inside Discord on **mobile**: the text asks for a **second phone or tablet**. (An *Open in browser on this phone* button was removed 2026-11-11: leaving Discord hides the table and iOS can suspend the Activity, so one phone can't be both.) Quick roll stays as the fallback.
    - Status text: *Waiting for your phone…* until the remote connects, then the sheet closes on its own.
 4. **Once paired:**
    - A 📱 badge appears on your player chip, visible to everyone.
