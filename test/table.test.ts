@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PlanFn } from "../src/game/host";
 import type { Faces } from "../src/game/rules";
 import type { Msg } from "../src/net/protocol";
+import { loginIdOf } from "../worker/src/peers";
 import { readRoomTicket, roomTicket } from "../worker/src/roomTicket";
 import { RECONNECT_GRACE_MS, TableServer, type Conn, type HouseTandem, type Saved } from "../worker/src/table";
 
@@ -11,26 +12,26 @@ function setup(faces: Faces[] = [], opts: { ht?: boolean; profile?: { earned: st
   const now = { t: 1_000 };
   const sent: Msg[] = [];
   let saved: Saved | undefined;
-  const records: { userId: string; delta: unknown; earned: string[] }[] = [];
+  const records: { userId: string; delta: unknown; earned: string[]; loginId: number | null | undefined }[] = [];
   const pending: Promise<unknown>[] = [];
-  const plays: { userId: string | number; game: string; seconds: number }[] = [];
+  const plays: { userId: string | number; game: string; seconds: number; loginId?: number | null }[] = [];
   const logs: string[] = [];
   const stored = new Map<string, Set<string>>();
   const ht: HouseTandem = {
     resolveDiscord: async () => ({ userId: 1, name: "x", avatar: null }),
     verifySession: async () => null,
     gameProfile: async () => opts.profile ?? { earned: [], stats: {} },
-    recordGame: async (userId, _game, delta, earned) => {
-      records.push({ userId, delta, earned });
+    recordGame: async (userId, _game, delta, earned, loginId) => {
+      records.push({ userId, delta, earned, loginId });
       const have = stored.get(userId) ?? new Set(opts.profile?.earned ?? []);
       stored.set(userId, have);
       const newlyEarned = earned.filter((id) => !have.has(id));
       for (const id of newlyEarned) have.add(id);
       return { newlyEarned };
     },
-    recordPlay: async (userId, game, seconds) => {
-      plays.push({ userId, game, seconds });
-      if (opts.recordPlay) return opts.recordPlay(userId, game, seconds);
+    recordPlay: async (userId, game, seconds, loginId) => {
+      plays.push({ userId, game, seconds, loginId });
+      if (opts.recordPlay) return opts.recordPlay(userId, game, seconds, loginId);
       return { seconds, sessions: 1, firstPlayed: null, lastPlayed: null, added: seconds };
     },
   };
@@ -50,7 +51,9 @@ function setup(faces: Faces[] = [], opts: { ht?: boolean; profile?: { earned: st
   return { table, now, sent, records, plays, logs, settle, saved: () => saved };
 }
 
-const A: Conn = { id: "a", role: "player", userId: "11" };
+const A: Conn = { id: "a", role: "player", userId: "11", loginId: 5 };
+/** Signed in through an account service from before logins: no login id. */
+const OLD: Conn = { id: "o", role: "player", userId: "33" };
 const B: Conn = { id: "b", role: "player" }; // guest
 const hello = (name: string): Msg => ({ t: "hello", player: { name } });
 
@@ -92,6 +95,7 @@ describe("TableServer (the relay room is the host)", () => {
     table.handle(B, throwMsg(), false); // guest b rolls a 7
     await settle();
     expect(records.every((r) => r.userId === "11")).toBe(true);
+    expect(records.every((r) => r.loginId === 5)).toBe(true); // under the login that signed in
     expect(records[0].delta).toMatchObject({ add: { rolls: 1 }, or: { doubles: 1 } });
   });
 
@@ -103,7 +107,41 @@ describe("TableServer (the relay room is the host)", () => {
     table.handle(A, { t: "start", target: 10 }, false);
     table.handle({ id: "0123456789abcdef", role: "remote" }, throwMsg("motion"), true);
     await settle();
-    expect(records[0]).toMatchObject({ userId: "11", delta: { add: { rolls: 1, shakerRolls: 1 } } });
+    expect(records[0]).toMatchObject({ userId: "11", loginId: 5, delta: { add: { rolls: 1, shakerRolls: 1 } } });
+  });
+
+  it("a player with no login id (older account service) is still credited, with null for the login", async () => {
+    const { table, sent, records, plays, settle } = setup([[1, 1]]);
+    table.connected([OLD]);
+    table.handle(OLD, hello("Old"), false);
+    table.handle(OLD, { t: "start", target: 10 }, false);
+    table.handle(OLD, throwMsg(), false);
+    table.handle(OLD, { t: "playtime", s: 60 } as Msg, false);
+    await settle();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ userId: "33", loginId: null });
+    expect(sent.some((m) => m.t === "achievement")).toBe(true);
+    expect(plays).toEqual([{ userId: "33", game: "dice", seconds: 60, loginId: null }]);
+  });
+
+  it("the login is the socket's: a reconnect under another login moves it, and a message can't set it", async () => {
+    const { table, records, plays, settle } = setup([[1, 2], [1, 2]]);
+    table.connected([A]);
+    table.handle(A, hello("Ann"), false);
+    table.handle(A, { t: "start", target: 10 }, false);
+    table.handle(A, { ...throwMsg(), loginId: 99, userId: "77" } as never, false);
+    table.handle(A, { t: "playtime", s: 30, loginId: 99 } as never, false);
+    const again: Conn = { ...A, loginId: 6 };
+    table.connected([again]);
+    table.handle(again, throwMsg(), false);
+    table.connected([{ id: "a", role: "player", userId: "11" }]); // and then with none
+    expect(table.logins.has("a")).toBe(false);
+    await settle();
+    expect(records.map((r) => [r.userId, r.loginId])).toEqual([
+      ["11", 5],
+      ["11", 6],
+    ]);
+    expect(plays).toEqual([{ userId: "11", game: "dice", seconds: 30, loginId: 5 }]);
   });
 
   it("lifetime achievements use the account's saved stats", async () => {
@@ -147,6 +185,14 @@ describe("TableServer (the relay room is the host)", () => {
     again.table.restore(saved());
     expect(again.table.authority.players.map((p) => p.id)).toEqual(["a"]);
     expect(again.table.accounts.get("a")).toBe("11");
+    expect(again.table.logins.get("a")).toBe(5);
+
+    // A room saved before logins were tracked still loads; its players just have no login yet.
+    const { logins: _logins, ...older } = saved()!;
+    const old = setup();
+    old.table.restore(older);
+    expect(old.table.accounts.get("a")).toBe("11");
+    expect(old.table.logins.size).toBe(0);
   });
 });
 
@@ -159,6 +205,26 @@ describe("room tickets carry the account", () => {
     expect((await readRoomTicket("s3cret", "d" + "0".repeat(30), "other", t)).ok).toBe(false);
     const old = await roomTicket("s3cret", "d" + "0".repeat(30), "abcd");
     expect(await readRoomTicket("s3cret", "d" + "0".repeat(30), "abcd", old)).toEqual({ ok: true });
+  });
+
+  it("binds the login id too; a swapped login fails; no login id gives the older ticket", async () => {
+    const room = "d" + "0".repeat(30);
+    const t = await roomTicket("s3cret", room, "abcd", "42", 7);
+    expect(t).toMatch(/^42\.7\.[0-9a-f]{32}$/);
+    expect(await readRoomTicket("s3cret", room, "abcd", t)).toEqual({ ok: true, userId: "42", loginId: 7 });
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(/^42\.7\./, "42.8."))).ok).toBe(false);
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(/^42\.7\./, "43.7."))).ok).toBe(false);
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(/^42\.7\./, "42."))).ok).toBe(false); // can't be passed off as an older ticket
+    const plain = await roomTicket("s3cret", room, "abcd", "42");
+    expect(await roomTicket("s3cret", room, "abcd", "42", null)).toBe(plain);
+    expect(await roomTicket("s3cret", room, "abcd", "42", undefined)).toBe(plain);
+    expect((await readRoomTicket("s3cret", room, "abcd", plain.replace(/^42\./, "42.7."))).ok).toBe(false); // nor a login added to one
+  });
+
+  it("reads a login id only from an integer (an older service sends none)", () => {
+    expect(loginIdOf(7)).toBe(7);
+    expect(loginIdOf("7")).toBe(7);
+    for (const v of [undefined, null, "", "x", "7x", 1.5, -1, Number.NaN, {}, true]) expect(loginIdOf(v)).toBeNull();
   });
 });
 
@@ -174,8 +240,8 @@ describe("time in game (housetandem-web #37)", () => {
     table.handle(A, playtime(5_000), false);
     await settle();
     expect(plays).toEqual([
-      { userId: "11", game: "dice", seconds: 61 },
-      { userId: "11", game: "dice", seconds: 600 },
+      { userId: "11", game: "dice", seconds: 61, loginId: 5 },
+      { userId: "11", game: "dice", seconds: 600, loginId: 5 },
     ]);
     // Bookkeeping only: nothing broadcast, the game isn't touched.
     expect(sent.length).toBe(before.sent);

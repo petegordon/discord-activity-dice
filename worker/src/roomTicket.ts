@@ -15,6 +15,10 @@
  * `<userId>.<sig>`, signed over the user id too, so the relay can credit
  * achievements to that account and nobody can swap in another id. A bare
  * 32-hex ticket (older clients, or no account service) admits a guest.
+ *
+ * When the account service says which login signed in, the ticket names it
+ * too: `<userId>.<loginId>.<sig>`, signed over both, so records land under
+ * that login. Tickets without one still work (the service picks the login).
  */
 export const DISCORD_ROOM_RE = /^d[0-9a-f]{30}$/;
 
@@ -35,16 +39,23 @@ export async function discordRoom(secret: string, instanceId: string): Promise<s
   return "d" + (await sign(secret, `room:${instanceId}`)).slice(0, 30);
 }
 
-export async function roomTicket(secret: string, room: string, playerId: string, userId?: string): Promise<string> {
+export async function roomTicket(secret: string, room: string, playerId: string, userId?: string, loginId?: number | null): Promise<string> {
+  if (userId && loginId != null) return `${userId}.${loginId}.${(await sign(secret, `ticket:${room}:${playerId}:${userId}:${loginId}`)).slice(0, 32)}`;
   if (userId) return `${userId}.${(await sign(secret, `ticket:${room}:${playerId}:${userId}`)).slice(0, 32)}`;
   return (await sign(secret, `ticket:${room}:${playerId}`)).slice(0, 32);
 }
 
 const USER_TICKET_RE = /^([0-9]{1,20})\.([0-9a-f]{32})$/;
+const LOGIN_TICKET_RE = /^([0-9]{1,20})\.([0-9]{1,16})\.([0-9a-f]{32})$/;
 
-/** A valid ticket: { ok, userId? }. */
-export async function readRoomTicket(secret: string, room: string, playerId: string, ticket: unknown): Promise<{ ok: boolean; userId?: string }> {
+/** A valid ticket: { ok, userId?, loginId? }. */
+export async function readRoomTicket(secret: string, room: string, playerId: string, ticket: unknown): Promise<{ ok: boolean; userId?: string; loginId?: number }> {
   if (typeof ticket !== "string") return { ok: false };
+  const l = LOGIN_TICKET_RE.exec(ticket);
+  if (l) {
+    const expected = await roomTicket(secret, room, playerId, l[1], Number(l[2]));
+    return same(expected, ticket) ? { ok: true, userId: l[1], loginId: Number(l[2]) } : { ok: false };
+  }
   const m = USER_TICKET_RE.exec(ticket);
   if (m) {
     const expected = await roomTicket(secret, room, playerId, m[1]);
