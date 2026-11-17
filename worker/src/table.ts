@@ -22,31 +22,38 @@ import { SERVER_ID, type Msg, type Player } from "../../src/net/protocol";
 export const RECONNECT_GRACE_MS = 8_000;
 export const GAME = "dice";
 
-/** The House Tandem account service, bound over RPC (see wrangler.jsonc `services`). */
+/**
+ * The House Tandem account service, bound over RPC (see wrangler.jsonc `services`).
+ * `loginId` is which of the account's logins signed in; records carry it. An
+ * older service doesn't return it, and without it picks the account's first login.
+ */
 export interface HouseTandem {
-  resolveDiscord(p: { discordId: string; name: string; avatar: string | null }): Promise<{ userId: string | number; name: string; avatar: string | null }>;
-  verifySession(token: string): Promise<{ userId: string | number; name: string; avatar: string | null } | null>;
+  resolveDiscord(p: { discordId: string; name: string; avatar: string | null }): Promise<{ userId: string | number; loginId?: number | null; name: string; avatar: string | null }>;
+  verifySession(token: string): Promise<{ userId: string | number; loginId?: number | null; name: string; avatar: string | null } | null>;
   gameProfile(userId: string, game: string): Promise<{ earned: string[]; stats: Record<string, unknown> }>;
-  recordGame(userId: string, game: string, delta: Delta, earned: string[]): Promise<{ newlyEarned: string[] }>;
+  recordGame(userId: string, game: string, delta: Delta, earned: string[], loginId?: number | null): Promise<{ newlyEarned: string[] }>;
   /** Time in game: `seconds` is a delta of active play since the last report (housetandem-web #37). */
   recordPlay(
     userId: string | number,
     game: string,
     seconds: number,
+    loginId?: number | null,
   ): Promise<{ seconds: number; sessions: number; firstPlayed: string | number | null; lastPlayed: string | number | null; added: number }>;
 }
 
 /** The account service caps each report at this anyway. */
 export const MAX_PLAYTIME_REPORT_S = 600;
 
-/** One connected socket. `userId` is set by the Worker after it verified a sign-in. */
-export type Conn = { id: string; role: "player" | "remote"; userId?: string };
+/** One connected socket. `userId` and `loginId` are set by the Worker after it verified a sign-in. */
+export type Conn = { id: string; role: "player" | "remote"; userId?: string; loginId?: number | null };
 
 /** What survives the Durable Object being evicted. */
 export type Saved = {
   players: Player[];
   game: GameState;
   accounts: Record<string, string>;
+  /** Missing in rooms saved before logins were tracked. */
+  logins?: Record<string, number>;
   missingSince: Record<string, number>;
 };
 
@@ -79,6 +86,8 @@ export class TableServer {
   readonly authority: HostAuthority;
   /** player id → House Tandem user id, for signed-in players. */
   readonly accounts = new Map<string, string>();
+  /** player id → the login they signed in with, when the account service says. */
+  readonly logins = new Map<string, number>();
   private missingSince = new Map<string, number>();
   private tracks = new Map<string, Track>();
   private byUser = new Map<string, Account>();
@@ -94,6 +103,8 @@ export class TableServer {
     this.authority.restore(saved.players ?? [], saved.game);
     this.accounts.clear();
     for (const [k, v] of Object.entries(saved.accounts ?? {})) this.accounts.set(k, v);
+    this.logins.clear();
+    for (const [k, v] of Object.entries(saved.logins ?? {})) this.logins.set(k, v);
     this.missingSince = new Map(Object.entries(saved.missingSince ?? {}));
   }
 
@@ -102,13 +113,19 @@ export class TableServer {
       players: this.authority.players,
       game: this.authority.game,
       accounts: Object.fromEntries(this.accounts),
+      logins: Object.fromEntries(this.logins),
       missingSince: Object.fromEntries(this.missingSince),
     };
   }
 
   /** Everyone connected right now (players and remotes). */
   connected(conns: Conn[]) {
-    for (const c of conns) if (c.role === "player" && c.userId) this.accounts.set(c.id, c.userId);
+    for (const c of conns) {
+      if (c.role !== "player" || !c.userId) continue;
+      this.accounts.set(c.id, c.userId);
+      if (c.loginId != null) this.logins.set(c.id, c.loginId);
+      else this.logins.delete(c.id);
+    }
     const present = new Set(conns.map((c) => c.id));
     const msgs = this.authority.remotesOnline(present);
     const t = this.now();
@@ -127,6 +144,7 @@ export class TableServer {
     for (const id of gone) {
       this.missingSince.delete(id);
       this.accounts.delete(id);
+      this.logins.delete(id);
       this.tracks.delete(id);
     }
     const keep = new Set(this.authority.players.map((p) => p.id).filter((id) => !gone.includes(id)));
@@ -157,8 +175,8 @@ export class TableServer {
   }
 
   /**
-   * Time in game for a signed-in player. The user id is the one the Worker
-   * verified for this socket, never anything the client sent; guests and
+   * Time in game for a signed-in player. The user id and login are the ones the
+   * Worker verified for this socket, never anything the client sent; guests and
    * remotes count nothing. The account service caps deltas to real time.
    */
   private playtime(conn: Conn, s: unknown) {
@@ -169,7 +187,7 @@ export class TableServer {
     const seconds = Math.min(MAX_PLAYTIME_REPORT_S, n);
     let work: Promise<unknown>;
     try {
-      work = Promise.resolve(ht.recordPlay(userId, GAME, seconds)).catch((e) => this.deps.log?.("recordPlay failed", e));
+      work = Promise.resolve(ht.recordPlay(userId, GAME, seconds, conn.loginId ?? null)).catch((e) => this.deps.log?.("recordPlay failed", e));
     } catch (e) {
       this.deps.log?.("recordPlay failed", e);
       return;
@@ -228,6 +246,7 @@ export class TableServer {
     const ht = this.deps.ht;
     if (!ht) return;
     const acc = this.account(userId);
+    const loginId = this.logins.get(playerId) ?? null;
     acc.session = applyDelta(acc.session, o.delta);
     const work = (async () => {
       await acc.loading;
@@ -236,7 +255,7 @@ export class TableServer {
       const claim = [...earned].filter((id) => !acc.earned.has(id));
       for (const id of claim) acc.earned.add(id);
       try {
-        const res = await ht.recordGame(userId, GAME, o.delta, claim);
+        const res = await ht.recordGame(userId, GAME, o.delta, claim, loginId);
         const fresh = (res?.newlyEarned ?? []).filter((x) => typeof x === "string");
         if (fresh.length) this.deps.broadcast([{ t: "achievement", playerId, ids: fresh }]);
       } catch (e) {
