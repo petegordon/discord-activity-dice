@@ -9,6 +9,8 @@
     "preview": "npm run build && wrangler dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
+    "sync-identity": "node scripts/sync-identity.mjs",
+    "check:identity": "node scripts/sync-identity.mjs --check",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
