@@ -10,22 +10,20 @@
  * The session goes to the relay with each connection; the relay checks it and
  * saves achievements to that account.
  *
- * The session itself (storage, talking to the account service, the redirect) is
- * the shared @usersfirst/identity client, vendored in src/vendor/identity
- * (scripts/sync-identity.mjs). What stays here is this game's side of it:
- * - swapping a handoff code for a session (the shared client can make a code,
- *   not redeem one);
- * - checking a session's date before it replaces the one already stored;
- * - forgetting a session the account service no longer takes (any 401);
- * - the name and picture this table shows (the Discord ones).
+ * The session itself (storage, talking to the account service, the redirect, the
+ * handoff code) is the shared @usersfirst/identity client, vendored in
+ * src/vendor/identity (scripts/sync-identity.mjs). What stays here is this game's
+ * side of it: a session within a minute of its end is not used, and the name and
+ * picture shown are the Discord ones.
  */
 import { IdentityClient, decodeToken, takeRedirect, type IdentityOptions, type IdentityUser } from "@usersfirst/identity/client";
 
 export const HT_API: string = (import.meta.env.VITE_HT_API as string | undefined) || "https://tandemonium-api.pete-872.workers.dev";
 /**
  * Where the session is kept. The token's key and value (the bare token) are what this
- * game has always stored, so a player signed in before the shared client stays signed in;
- * the user beside it is new and is filled in on their next visit.
+ * game has always stored, so a player signed in before the shared client stays signed in
+ * (the client reads the token alone as a session); the user beside it is new and is
+ * filled in on their next visit.
  */
 const KEYS = { token: "dice.ht_token", user: "dice.ht_user" };
 const UNAVAILABLE = "Sign-in is unavailable right now";
@@ -48,68 +46,34 @@ function tableUser(u: IdentityUser): HtUser {
 }
 
 export function createHouseTandem(env: HtEnv = {}) {
-  const client = new IdentityClient({ apiBase: HT_API, keys: KEYS, ...env });
+  // forgetOn401: a session the account service no longer takes is forgotten.
+  const client = new IdentityClient({ apiBase: HT_API, keys: KEYS, forgetOn401: true, ...env });
   const loc = () => env.location ?? location;
   const hist = () => env.history ?? history;
   const valid = (token: string | null | undefined): token is string => tokenValid(token, env.now ? env.now() : Date.now());
 
-  /** Back from Discord: take #ht_auth off the URL. */
-  function takeRedirectToken(): string | null {
-    const back = takeRedirect(loc(), hist());
-    return back && valid(back.token) ? back.token : null;
-  }
-
-  /** From housetandem.com: swap ?ht_code for a session, and take it off the URL. */
-  async function redeem(): Promise<{ token: string; user?: unknown } | null> {
-    const l = loc();
-    const params = new URLSearchParams(l.search);
-    const code = params.get("ht_code");
-    if (!code) return null;
-    params.delete("ht_code");
-    const rest = params.toString();
-    hist().replaceState(null, "", l.pathname + (rest ? `?${rest}` : "") + l.hash);
-    try {
-      const r = await client.api("/auth/handoff/redeem", { method: "POST", body: { code }, auth: false });
-      if (!r.ok) return null;
-      const token = r.data.token as string | undefined;
-      return valid(token) ? { token, user: r.data.user } : null;
-    } catch {
+  /** Re-read the session's account. Null (and forgotten) if the account is gone or the service no longer takes the session. */
+  async function readUser(): Promise<HtUser | null> {
+    const user = await client.refresh();
+    if (!client.token) {
+      client.signOut(); // (an account that is gone leaves its stored profile behind otherwise)
       return null;
     }
-  }
-
-  /**
-   * Make `token` this device's session and read its account. Null (and forgotten) if
-   * the account is gone or the service no longer takes the session.
-   */
-  async function userFor(token: string, serverUser?: unknown): Promise<HtUser | null> {
-    if (client.token !== token || !client.user) {
-      const c = decodeToken(token) ?? {};
-      const provider = typeof c.via === "string" ? c.via.split(":")[0] : "discord";
-      client.apply(token, serverUser ?? { id: c.sub, name: typeof c.name === "string" ? c.name : undefined }, { provider });
-    }
-    const user = await client.refresh();
-    if (!user) {
-      if (!client.token || client.meStatus === 401) {
-        client.signOut();
-        return null;
-      }
-      if (client.meStatus >= 200 && client.meStatus < 300) return null; // answered, with no account in it
-      // Offline or the service is down: keep the session, show what it last knew.
-    }
+    if (!user && client.meStatus >= 200 && client.meStatus < 300) return null; // answered, with no account in it
+    // No answer (offline, or the service is down): keep the session, show what it last knew.
     return client.user ? tableUser(client.user) : null;
   }
 
   /** The signed-in session on this device, from a fresh sign-in, a handoff, or storage. */
   async function webSession(): Promise<HtSession | null> {
-    const fresh = takeRedirectToken();
-    const handed = fresh ? null : await redeem();
-    const token = fresh ?? handed?.token ?? client.token;
+    const back = await client.resume(); // #ht_auth, back from Discord
+    if (!back?.signedIn) await client.redeemHandoff(); // ?ht_code, from housetandem.com
+    const token = client.token;
     if (!valid(token)) {
       client.signOut();
       return null;
     }
-    const user = await userFor(token, handed?.user);
+    const user = await readUser();
     return user ? { token, user } : null;
   }
 
@@ -129,9 +93,21 @@ export function createHouseTandem(env: HtEnv = {}) {
 
   return {
     client,
-    takeRedirectToken,
-    redeemHandoff: async () => (await redeem())?.token ?? null,
-    fetchUser: (token: string) => userFor(token),
+    /** Back from Discord: take #ht_auth off the URL (webSession does this itself, and signs in). */
+    takeRedirectToken: (): string | null => {
+      const back = takeRedirect(loc(), hist());
+      return back && valid(back.token) ? back.token : null;
+    },
+    /** From housetandem.com: swap ?ht_code for a session, and take it off the URL. */
+    redeemHandoff: async (): Promise<string | null> => ((await client.redeemHandoff())?.signedIn ? client.token : null),
+    /** Make `token` this device's session and read its account. */
+    fetchUser: (token: string): Promise<HtUser | null> => {
+      if (client.token !== token) {
+        const c = decodeToken(token) ?? {};
+        client.apply(token, { id: c.sub, name: typeof c.name === "string" ? c.name : undefined });
+      }
+      return readUser();
+    },
     webSession,
     beginSignIn,
     signOut: () => client.signOut(),

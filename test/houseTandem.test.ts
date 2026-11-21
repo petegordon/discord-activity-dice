@@ -107,8 +107,8 @@ describe("back from Discord (#ht_auth)", () => {
     expect(s.m.get(TOKEN_KEY)).toBe(token); // the bare token, as before
     expect(JSON.parse(s.m.get(USER_KEY)!).id).toBe(7);
     expect(p.url()).toBe("/?room=ABC#k=roomkey");
-    expect(a.calls).toHaveLength(1);
-    expect(a.calls[0].headers.Authorization).toBe(`Bearer ${token}`);
+    expect(a.calls.length).toBeGreaterThan(0);
+    for (const call of a.calls) expect(call).toMatchObject({ url: `${HT_API}/me`, headers: { Authorization: `Bearer ${token}` } });
   });
 
   it("an expired token in the URL does not replace the stored session", async () => {

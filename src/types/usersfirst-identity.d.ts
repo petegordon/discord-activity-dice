@@ -28,6 +28,8 @@ declare module "@usersfirst/identity/client" {
     location?: Pick<Location, "hash" | "pathname" | "search" | "origin" | "assign">;
     history?: Pick<History, "replaceState">;
     now?: () => number;
+    /** refresh(): any 401 ends the session (default: only `account_gone` does). */
+    forgetOn401?: boolean;
   };
   export type ApiAnswer = { ok: boolean; status: number; data: Record<string, any> };
 
@@ -53,6 +55,10 @@ declare module "@usersfirst/identity/client" {
     signOut(): void;
     api(path: string, o?: { method?: string; body?: unknown; auth?: boolean }): Promise<ApiAnswer>;
     refresh(): Promise<IdentityUser | null>;
+    /** Back from a redirect: sign in with `#ht_auth` (an expired one is refused), or finish a link. Null: nothing to do. */
+    resume(): Promise<{ signedIn?: boolean; expired?: boolean; link?: string; error?: string; server?: string; steam?: string; after?: string } | null>;
+    /** Take `?ht_code` off the address and swap it for a session. Null: there was no code. */
+    redeemHandoff(): Promise<{ signedIn: boolean; error?: string } | null>;
     begin(
       provider: "discord" | "steam",
       o?: { mode?: "redirect" | "device"; link?: boolean; returnTo?: string; joinServer?: boolean; scopes?: string[] },
