@@ -353,7 +353,6 @@ input {
 .ht-account { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; font-size: 13px; color: var(--muted, #bbb); margin-top: 4px; }
 .ht-account[hidden] { display: none; }
 .ht-account img { width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; }
-.ht-discord { background: #5865f2 !important; color: #fff !important; border-color: #5865f2 !important; }
 .or { margin: 4px 0 0; text-align: center; }
 .small { font-size: 12px; }
 
