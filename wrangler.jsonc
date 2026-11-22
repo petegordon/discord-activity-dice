@@ -21,7 +21,8 @@
   "unsafe": {
     "bindings": [
       { "name": "TOKEN_RATE", "type": "ratelimit", "namespace_id": "4101", "simple": { "limit": 300, "period": 60 } },
-      { "name": "ROOM_RATE", "type": "ratelimit", "namespace_id": "4102", "simple": { "limit": 600, "period": 60 } }
+      { "name": "ROOM_RATE", "type": "ratelimit", "namespace_id": "4102", "simple": { "limit": 600, "period": 60 } },
+      { "name": "PLAYER_RATE", "type": "ratelimit", "namespace_id": "4103", "simple": { "limit": 60, "period": 60 } }
     ]
   },
   // The House Tandem account service (Tandemonium's API Worker): verifies sign-ins and saves

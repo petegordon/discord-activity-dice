@@ -4,7 +4,7 @@ import { planRoll } from "../../src/dice/plan";
 import { KEY_RE, keyHash, verifyPlayerKey } from "../../src/net/identityKey";
 import { CLIENT_BROADCASTS, isEnvelope, SERVER_ID, type Msg } from "../../src/net/protocol";
 import { userInInstance } from "./discordInstance";
-import { CLOSE_TOO_MANY, clientAddress, newBucket, take, withinLimit, type Bucket, type RateLimiter } from "./limits";
+import { CLOSE_TOO_MANY, clientAddress, newBucket, take, withinLimit, type Bucket, type RateLimiter, playerKey } from "./limits";
 import { loginIdOf, splitPeers, type Attachment } from "./peers";
 import { CLOSE_NO_JOIN, CLOSE_NOT_LINKED, MAX_WAITING, registration, remoteIdOf, remoteOwner, reviewRemotes } from "./remotes";
 import { DISCORD_ROOM_RE, discordRoom, readRoomTicket, roomTicket } from "./roomTicket";
@@ -26,6 +26,7 @@ export interface Env {
   /** Rate limits per address (wrangler.jsonc; worker/src/limits.ts). Without them there is no limit. */
   TOKEN_RATE?: RateLimiter;
   ROOM_RATE?: RateLimiter;
+  PLAYER_RATE?: RateLimiter;
 }
 
 const ROOM_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -90,6 +91,8 @@ export default {
           loginId = t.loginId ?? null;
         }
       }
+      // One player's connections, whatever address they come from (see worker/src/limits.ts).
+      if (!(await withinLimit(env.PLAYER_RATE, playerKey(req, { userId, playerId: id })))) return json({ error: "too many connections" }, 429);
       if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected websocket" }, 426);
       const headers = new Headers(req.headers);
       headers.delete(USER_HEADER);
@@ -190,6 +193,8 @@ async function exchangeToken(req: Request, env: Env): Promise<Response> {
       unreachable = true;
     }
   }
+  // One player's exchanges, whatever address they come from.
+  if (me && !(await withinLimit(env.PLAYER_RATE, playerKey(req, { userId: "discord:" + me.id })))) return json({ error: "too many requests", retry: true }, 429);
   // The ticket is for the instance the client names, so check with Discord that this user is in it
   // (only possible with the bot token; see worker/src/discordInstance.ts).
   const cantCheck = () => json({ error: "could not check the activity", retry: true }, 503);
