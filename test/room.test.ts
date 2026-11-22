@@ -170,7 +170,7 @@ describe("RelayTransport", () => {
 });
 
 describe("relay rooms run by the server", () => {
-  it("a relay saying server:true is the host: the first player is never host, and the ht session goes in the URL", async () => {
+  it("a relay saying server:true is the host: the first player is never host, and the ht session goes in the first message, not the address", async () => {
     class Sock {
       static OPEN = 1;
       static last: Sock;
@@ -178,10 +178,13 @@ describe("relay rooms run by the server", () => {
       onopen?: () => void;
       onmessage?: (e: { data: string }) => void;
       onclose?: () => void;
+      sent: string[] = [];
       constructor(public url: string) {
         Sock.last = this;
       }
-      send() {}
+      send(d: string) {
+        this.sent.push(d);
+      }
       close() {}
     }
     vi.stubGlobal("WebSocket", Sock);
@@ -190,9 +193,10 @@ describe("relay rooms run by the server", () => {
     const changes: boolean[] = [];
     relay.on("host-change", (h) => changes.push(h));
     const connected = relay.connect();
-    expect(Sock.last.url).toContain("ht=tok");
+    expect(Sock.last.url).not.toContain("tok");
     Sock.last.readyState = 1;
     Sock.last.onopen?.();
+    expect(Sock.last.sent.map((d) => JSON.parse(d))).toEqual([{ to: "server", msg: { t: "join", ht: "tok" } }]);
     Sock.last.onmessage?.({ data: JSON.stringify({ type: "peers", server: true, ids: ["a", "b"], remotes: [] }) });
     await connected;
     expect(relay.isHost).toBe(false);

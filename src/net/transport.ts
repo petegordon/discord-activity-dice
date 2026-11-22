@@ -16,6 +16,8 @@ export type TransportStatus =
   | { kind: "connecting" }
   | { kind: "connected" }
   | { kind: "reconnecting" }
+  /** Remotes on the relay: no player has this remote's key registered. The transport keeps trying. */
+  | { kind: "unlinked" }
   | { kind: "failed"; reason: string };
 
 /**
@@ -30,6 +32,11 @@ export interface Transport {
   readonly serverHosted?: boolean;
   connect(): Promise<void>;
   send(msg: Msg, to: Target): void;
+  /**
+   * Relay only: tell the room which remote may play for us, by the hash of the
+   * key in our remote link (null: none). See worker/src/remotes.ts.
+   */
+  registerRemote?(keyHash: string | null): void;
   on<K extends keyof TransportEvents>(event: K, cb: TransportEvents[K]): void;
   close(): void;
 }

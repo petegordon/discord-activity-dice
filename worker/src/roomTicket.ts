@@ -4,23 +4,25 @@
  * A Discord Activity's relay room is named after an HMAC of its instance id,
  * not the id itself, so a shaker-remote link (which carries the room name)
  * doesn't reveal the instance id. Players join a Discord room only with a
- * ticket, which /api/token hands out after a successful Discord login. Anyone
- * holding just a remote link can connect as a remote, which the host ignores
- * unless a player has paired it.
+ * ticket, which /api/token hands out after a successful Discord login. A
+ * remote needs no ticket: the room takes it only when a player there has
+ * registered its key (worker/src/remotes.ts).
  *
  * The HMAC key is derived from the Discord client secret, so there's no extra
  * secret to manage. Shared by the Worker and the tests (WebCrypto in both).
  *
- * A ticket from a signed-in player also names their House Tandem account:
- * `<userId>.<sig>`, signed over the user id too, so the relay can credit
- * achievements to that account and nobody can swap in another id. A bare
- * 32-hex ticket (older clients, or no account service) admits a guest.
- *
- * When the account service says which login signed in, the ticket names it
- * too: `<userId>.<loginId>.<sig>`, signed over both, so records land under
- * that login. Tickets without one still work (the service picks the login).
+ * A ticket is `<expires>.<userId>.<loginId>.<sig>`: when it stops working
+ * (unix seconds), the player's House Tandem account and the login that signed
+ * in (both empty for a guest; the login also when the account service doesn't
+ * say), and an HMAC over all of it with the room and the player id. The relay
+ * credits achievements to that account, and nobody can swap in another id or a
+ * later date. A ticket is good for TICKET_TTL_MS; the client asks /api/token
+ * for a new one when the relay stops taking it.
  */
 export const DISCORD_ROOM_RE = /^d[0-9a-f]{30}$/;
+
+/** How long a ticket admits its player. */
+export const TICKET_TTL_MS = 12 * 60 * 60 * 1000;
 
 const encoder = new TextEncoder();
 
@@ -39,29 +41,39 @@ export async function discordRoom(secret: string, instanceId: string): Promise<s
   return "d" + (await sign(secret, `room:${instanceId}`)).slice(0, 30);
 }
 
-export async function roomTicket(secret: string, room: string, playerId: string, userId?: string, loginId?: number | null): Promise<string> {
-  if (userId && loginId != null) return `${userId}.${loginId}.${(await sign(secret, `ticket:${room}:${playerId}:${userId}:${loginId}`)).slice(0, 32)}`;
-  if (userId) return `${userId}.${(await sign(secret, `ticket:${room}:${playerId}:${userId}`)).slice(0, 32)}`;
-  return (await sign(secret, `ticket:${room}:${playerId}`)).slice(0, 32);
+export async function roomTicket(
+  secret: string,
+  room: string,
+  playerId: string,
+  userId?: string,
+  loginId?: number | null,
+  expiresAt: number = Date.now() + TICKET_TTL_MS,
+): Promise<string> {
+  const exp = Math.floor(expiresAt / 1000);
+  const user = userId ?? "";
+  const login = userId && loginId != null ? String(loginId) : "";
+  const sig = (await sign(secret, `ticket:v2:${room}:${playerId}:${exp}:${user}:${login}`)).slice(0, 32);
+  return `${exp}.${user}.${login}.${sig}`;
 }
 
-const USER_TICKET_RE = /^([0-9]{1,20})\.([0-9a-f]{32})$/;
-const LOGIN_TICKET_RE = /^([0-9]{1,20})\.([0-9]{1,16})\.([0-9a-f]{32})$/;
+const TICKET_RE = /^([0-9]{1,12})\.([0-9]{0,20})\.([0-9]{0,16})\.([0-9a-f]{32})$/;
 
-/** A valid ticket: { ok, userId?, loginId? }. */
-export async function readRoomTicket(secret: string, room: string, playerId: string, ticket: unknown): Promise<{ ok: boolean; userId?: string; loginId?: number }> {
-  if (typeof ticket !== "string") return { ok: false };
-  const l = LOGIN_TICKET_RE.exec(ticket);
-  if (l) {
-    const expected = await roomTicket(secret, room, playerId, l[1], Number(l[2]));
-    return same(expected, ticket) ? { ok: true, userId: l[1], loginId: Number(l[2]) } : { ok: false };
-  }
-  const m = USER_TICKET_RE.exec(ticket);
-  if (m) {
-    const expected = await roomTicket(secret, room, playerId, m[1]);
-    return same(expected, ticket) ? { ok: true, userId: m[1] } : { ok: false };
-  }
-  return { ok: await verifyRoomTicket(secret, room, playerId, ticket) };
+/** A ticket the room takes: { ok, userId?, loginId? }. `expired`: it is one of ours, but its time is up. */
+export async function readRoomTicket(
+  secret: string,
+  room: string,
+  playerId: string,
+  ticket: unknown,
+  now: number = Date.now(),
+): Promise<{ ok: boolean; expired?: boolean; userId?: string; loginId?: number }> {
+  const m = typeof ticket === "string" ? TICKET_RE.exec(ticket) : null;
+  if (!m) return { ok: false };
+  const [whole, exp, user, login] = m;
+  if (login && !user) return { ok: false };
+  const expected = await roomTicket(secret, room, playerId, user || undefined, login ? Number(login) : null, Number(exp) * 1000);
+  if (!same(expected, whole)) return { ok: false };
+  if (Number(exp) * 1000 <= now) return { ok: false, expired: true };
+  return { ok: true, ...(user ? { userId: user } : {}), ...(login ? { loginId: Number(login) } : {}) };
 }
 
 function same(a: string, b: string): boolean {
@@ -71,10 +83,6 @@ function same(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export async function verifyRoomTicket(secret: string, room: string, playerId: string, ticket: unknown): Promise<boolean> {
-  if (typeof ticket !== "string" || ticket.length !== 32) return false;
-  const expected = await roomTicket(secret, room, playerId);
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ ticket.charCodeAt(i);
-  return diff === 0;
+export async function verifyRoomTicket(secret: string, room: string, playerId: string, ticket: unknown, now: number = Date.now()): Promise<boolean> {
+  return (await readRoomTicket(secret, room, playerId, ticket, now)).ok;
 }

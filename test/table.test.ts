@@ -3,7 +3,7 @@ import type { PlanFn } from "../src/game/host";
 import type { Faces } from "../src/game/rules";
 import type { Msg } from "../src/net/protocol";
 import { loginIdOf } from "../worker/src/peers";
-import { readRoomTicket, roomTicket } from "../worker/src/roomTicket";
+import { readRoomTicket, roomTicket, TICKET_TTL_MS } from "../worker/src/roomTicket";
 import { MIN_PLAYTIME_GAP_MS, RECONNECT_GRACE_MS, TableServer, type Conn, type HouseTandem, type Saved } from "../worker/src/table";
 
 const throwMsg = (source: "button" | "motion" = "button"): Msg => ({ t: "throw", input: { dir: [0, 1], speed: 0.5, spin: 0.5, source } });
@@ -197,28 +197,51 @@ describe("TableServer (the relay room is the host)", () => {
 });
 
 describe("room tickets carry the account", () => {
-  it("binds the House Tandem user id; a swapped id fails; old tickets are guests", async () => {
-    const t = await roomTicket("s3cret", "d" + "0".repeat(30), "abcd", "42");
-    expect(t).toMatch(/^42\.[0-9a-f]{32}$/);
-    expect(await readRoomTicket("s3cret", "d" + "0".repeat(30), "abcd", t)).toEqual({ ok: true, userId: "42" });
-    expect((await readRoomTicket("s3cret", "d" + "0".repeat(30), "abcd", t.replace(/^42/, "43"))).ok).toBe(false);
-    expect((await readRoomTicket("s3cret", "d" + "0".repeat(30), "other", t)).ok).toBe(false);
-    const old = await roomTicket("s3cret", "d" + "0".repeat(30), "abcd");
-    expect(await readRoomTicket("s3cret", "d" + "0".repeat(30), "abcd", old)).toEqual({ ok: true });
+  const room = "d" + "0".repeat(30);
+
+  it("binds the House Tandem user id; a swapped id fails; a ticket with no account is a guest", async () => {
+    const t = await roomTicket("s3cret", room, "abcd", "42");
+    expect(t).toMatch(/^[0-9]+.42..[0-9a-f]{32}$/);
+    expect(await readRoomTicket("s3cret", room, "abcd", t)).toEqual({ ok: true, userId: "42" });
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(".42.", ".43."))).ok).toBe(false);
+    expect((await readRoomTicket("s3cret", room, "other", t)).ok).toBe(false);
+    const guest = await roomTicket("s3cret", room, "abcd");
+    expect(await readRoomTicket("s3cret", room, "abcd", guest)).toEqual({ ok: true });
+    expect((await readRoomTicket("s3cret", room, "abcd", guest.replace("..", ".42."))).ok).toBe(false); // nor an account added to one
   });
 
-  it("binds the login id too; a swapped login fails; no login id gives the older ticket", async () => {
-    const room = "d" + "0".repeat(30);
+  it("binds the login id too; a swapped, dropped or added login fails", async () => {
     const t = await roomTicket("s3cret", room, "abcd", "42", 7);
-    expect(t).toMatch(/^42\.7\.[0-9a-f]{32}$/);
+    expect(t).toMatch(/^[0-9]+.42.7.[0-9a-f]{32}$/);
     expect(await readRoomTicket("s3cret", room, "abcd", t)).toEqual({ ok: true, userId: "42", loginId: 7 });
-    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(/^42\.7\./, "42.8."))).ok).toBe(false);
-    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(/^42\.7\./, "43.7."))).ok).toBe(false);
-    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(/^42\.7\./, "42."))).ok).toBe(false); // can't be passed off as an older ticket
-    const plain = await roomTicket("s3cret", room, "abcd", "42");
-    expect(await roomTicket("s3cret", room, "abcd", "42", null)).toBe(plain);
-    expect(await roomTicket("s3cret", room, "abcd", "42", undefined)).toBe(plain);
-    expect((await readRoomTicket("s3cret", room, "abcd", plain.replace(/^42\./, "42.7."))).ok).toBe(false); // nor a login added to one
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(".42.7.", ".42.8."))).ok).toBe(false);
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(".42.7.", ".43.7."))).ok).toBe(false);
+    expect((await readRoomTicket("s3cret", room, "abcd", t.replace(".42.7.", ".42.."))).ok).toBe(false);
+    const plain = await roomTicket("s3cret", room, "abcd", "42", null, 5_000_000);
+    expect(await roomTicket("s3cret", room, "abcd", "42", undefined, 5_000_000)).toBe(plain);
+    expect((await readRoomTicket("s3cret", room, "abcd", plain.replace(".42..", ".42.7."), 0)).ok).toBe(false);
+  });
+
+  it("a ticket stops working after 12 hours, and its date can't be moved", async () => {
+    const issued = 1_700_000_000_000;
+    const t = await roomTicket("s3cret", room, "abcd", "42", 7, issued + TICKET_TTL_MS);
+    expect(TICKET_TTL_MS).toBe(12 * 60 * 60 * 1000);
+    expect(await readRoomTicket("s3cret", room, "abcd", t, issued)).toEqual({ ok: true, userId: "42", loginId: 7 });
+    expect((await readRoomTicket("s3cret", room, "abcd", t, issued + TICKET_TTL_MS - 1000)).ok).toBe(true);
+    expect(await readRoomTicket("s3cret", room, "abcd", t, issued + TICKET_TTL_MS)).toEqual({ ok: false, expired: true });
+    const exp = Number(t.split(".")[0]);
+    const later = t.replace(String(exp), String(exp + 3600));
+    expect(await readRoomTicket("s3cret", room, "abcd", later, issued + TICKET_TTL_MS)).toEqual({ ok: false });
+    // A ticket issued now runs out 12 hours from now.
+    const fresh = await roomTicket("s3cret", room, "abcd");
+    expect((await readRoomTicket("s3cret", room, "abcd", fresh)).ok).toBe(true);
+    expect((await readRoomTicket("s3cret", room, "abcd", fresh, Date.now() + TICKET_TTL_MS + 1000)).expired).toBe(true);
+  });
+
+  it("tickets in the form used before they carried a date are not taken", async () => {
+    for (const old of ["0".repeat(32), "42." + "0".repeat(32), "42.7." + "0".repeat(32), "", undefined, 7]) {
+      expect(await readRoomTicket("s3cret", room, "abcd", old)).toEqual({ ok: false });
+    }
   });
 
   it("reads a login id only from an integer (an older service sends none)", () => {

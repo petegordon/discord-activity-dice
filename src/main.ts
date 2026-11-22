@@ -19,7 +19,7 @@ import { apiBase, debug, inDiscord, transportChoice } from "./platform/env";
 import { inviteLink, standaloneRoom, storedName, storeName } from "./platform/identity";
 import { beginSignIn, signOut, webSession, type HtSession } from "./platform/houseTandem";
 import { createPlaytime } from "./platform/playtime";
-import { newIdentity } from "./net/identityKey";
+import { keyHash, newIdentity } from "./net/identityKey";
 import { remoteLink } from "./remote/link";
 import { DiceScene } from "./render/scene";
 import { UI } from "./ui";
@@ -47,7 +47,7 @@ async function boot() {
   let calibration: CalibrationSheet | null = null;
   let discord: DiscordSession | null = null;
   /** Our shaker remote's identity, once the 📱 sheet has been opened. */
-  let remote: { id: string; key: string; sentAt: number } | null = null;
+  let remote: { id: string; key: string; hash: string; sentAt: number } | null = null;
 
   const ui = new UI(
     {
@@ -123,7 +123,7 @@ async function boot() {
 
   ui.status({ kind: "connecting" });
   const transport: Transport =
-    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase, { ticket: self.ticket, ht: ht?.token })
+    transportKind === "relay" ? new RelayTransport(roomId, self.id, self.key, apiBase, { ticket: self.ticket, refreshTicket: discord?.refreshTicket, ht: ht?.token })
       : new PeerJsTransport(roomId, self.id, self.key, await peerOptions());
   room = new Room(transport, self, (rollId, shooter, input) => planRoll(rollId, shooter, input));
   const r = room;
@@ -196,8 +196,9 @@ async function boot() {
     if (!room) return;
     if (fresh || !remote) {
       const { id, key } = await newIdentity();
-      remote = { id, key, sentAt: Date.now() };
-      room.pair(id);
+      const hash = await keyHash(key);
+      remote = { id, key, hash, sentAt: Date.now() };
+      room.pair(id, hash);
     }
     ui.openPair();
     paintPair();
@@ -208,7 +209,7 @@ async function boot() {
     const mine = me();
     if (!remote || !mine || mine.remoteId === remote.id || Date.now() - remote.sentAt < REPAIR_MS) return;
     remote.sentAt = Date.now();
-    r.pair(remote.id);
+    r.pair(remote.id, remote.hash);
   }
 
   function refresh() {

@@ -192,6 +192,8 @@ describe("RelayTransport roles", () => {
     const remote = new RelayTransport("ROOM", R1, "key", "/api", { role: "remote" });
     void remote.connect();
     expect(FakeSocket.instances.at(-1)!.url).toContain("role=remote");
+    // A remote's key is never in the address; it goes in the first message.
+    expect(FakeSocket.instances.at(-1)!.url).not.toContain("key");
     remote.close();
   });
 });

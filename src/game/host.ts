@@ -39,7 +39,8 @@ export function sanitizeName(name: unknown): string {
   return clean || "Player";
 }
 
-function sanitizeAvatar(url: unknown): string | undefined {
+/** A player picture is shown only from Discord's CDN, over https. Used by the host, and by everyone on what the host sends. */
+export function sanitizeAvatar(url: unknown): string | undefined {
   return typeof url === "string" && /^https:\/\/cdn\.discordapp\.com\//.test(url) ? url : undefined;
 }
 
