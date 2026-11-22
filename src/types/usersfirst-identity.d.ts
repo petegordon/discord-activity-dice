@@ -30,8 +30,8 @@ declare module "@usersfirst/identity/client" {
     now?: () => number;
     /** refresh(): any 401 ends the session (default: only `account_gone` does). */
     forgetOn401?: boolean;
-    /** Asked before a sign-in replaces a different account (default: the browser's confirm). */
-    confirmSwitch?: (q: { from: { name?: string } | null; to: { name?: string } }) => boolean | Promise<boolean>;
+    /** Asked before a sign-in takes this browser (default: the browser's confirm). */
+    confirmSwitch?: (q: { from: { name?: string } | null; to: { name?: string; avatar?: string } }) => boolean | Promise<boolean>;
   };
   export type ApiAnswer = { ok: boolean; status: number; data: Record<string, any> };
 
@@ -39,7 +39,7 @@ declare module "@usersfirst/identity/client" {
   export function takeRedirect(
     loc?: Pick<Location, "hash" | "pathname" | "search">,
     hist?: Pick<History, "replaceState">,
-  ): { token?: string; result?: { id: string; code: string }; link?: { id: string; code: string }; server?: string; steam?: string } | null;
+  ): { result?: { id: string; code: string }; link?: { id: string; code: string } } | null;
 
   export class IdentityClient {
     constructor(opts: IdentityOptions);
@@ -57,7 +57,7 @@ declare module "@usersfirst/identity/client" {
     signOut(): void;
     api(path: string, o?: { method?: string; body?: unknown; auth?: boolean }): Promise<ApiAnswer>;
     refresh(): Promise<IdentityUser | null>;
-    /** Back from a redirect: swap `#ht_result` for a session (or an older `#ht_auth`, after a yes), or finish a link. Null: nothing to do. */
+    /** Back from a redirect: swap `#ht_result` for a session, or finish a link. Null: nothing to do. */
     resume(): Promise<{ signedIn?: boolean; expired?: boolean; mismatch?: boolean; declined?: boolean; link?: string; error?: string; server?: string; steam?: string; after?: string } | null>;
     /** Take `?ht_code` off the address and swap it for a session. Null: there was no code. */
     redeemHandoff(): Promise<{ signedIn: boolean; error?: string; declined?: boolean } | null>;
@@ -80,4 +80,9 @@ declare module "@usersfirst/identity/elements/uf-signin" {
     named(name: string): HTMLElement | null;
     renderNow(): void;
   }
+}
+
+declare module "@usersfirst/identity/elements/ask-switch" {
+  /** "Continue as …?" in a modal dialog on the page. True only when the player chose to continue. */
+  export function askInPage(q: { from: { name?: string } | null; to: { name?: string; avatar?: string } }): Promise<boolean>;
 }

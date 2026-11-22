@@ -98,17 +98,13 @@ describe("tokenValid", () => {
   });
 });
 
-describe("an older redirect (#ht_auth), after a yes", () => {
-  it("signs in, stores the session under the game's own key, and cleans the URL", async () => {
-    const token = jwt();
-    const { ht, p, s, a } = setup(`https://dice.example/?room=ABC#ht_auth=${token}&k=roomkey`, { "/me": ME });
-    const session = await ht.webSession();
-    expect(session).toEqual({ token, user: { id: "7", name: "DiscordName", avatar: "https://cdn.discordapp.com/avatars/1/a.png" } });
-    expect(s.m.get(TOKEN_KEY)).toBe(token); // the bare token, as before
-    expect(JSON.parse(s.m.get(USER_KEY)!).id).toBe(7);
+describe("a session token in the address (#ht_auth)", () => {
+  it("is taken off the address and never used", async () => {
+    const { ht, p, s, a } = setup(`https://dice.example/?room=ABC#ht_auth=${jwt()}&k=roomkey`, { "/me": ME });
+    expect(await ht.webSession()).toBeNull();
+    expect(s.m.get(TOKEN_KEY)).toBeUndefined();
     expect(p.url()).toBe("/?room=ABC#k=roomkey");
-    expect(a.calls.length).toBeGreaterThan(0);
-    for (const call of a.calls) expect(call).toMatchObject({ url: `${HT_API}/me`, headers: { Authorization: `Bearer ${token}` } });
+    expect(a.calls.length).toBe(0);
   });
 
   it("an expired token in the URL does not replace the stored session", async () => {
@@ -122,7 +118,7 @@ describe("an older redirect (#ht_auth), after a yes", () => {
 
   it("shows the account's own name, and no picture, when the picture is not Discord's", async () => {
     const me = { json: { user: { id: 7, display_name: "Account Name", avatar_url: "https://example.com/a.png", identities: { discord: { avatar: "https://evil.example/a.png" } } } } };
-    const { ht } = setup(`https://dice.example/#ht_auth=${jwt()}`, { "/me": me });
+    const { ht } = setup("https://dice.example/", { "/me": me }, { [TOKEN_KEY]: jwt() });
     expect((await ht.webSession())?.user).toEqual({ id: "7", name: "Account Name", avatar: undefined });
   });
 });
