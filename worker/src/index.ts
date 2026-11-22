@@ -213,6 +213,7 @@ export class RelayRoom extends DurableObject<Env> {
     this.table = new TableServer({
       plan: (rollId, shooter, input) => planRoll(rollId, shooter, input),
       broadcast: (msgs) => this.broadcast(msgs),
+      send: (to, msgs) => this.sendTo(to, msgs),
       save: (s) => void ctx.storage.put("table", s).catch(() => {}),
       ht: env.HT,
       wait: (p) => ctx.waitUntil(p),
@@ -291,6 +292,8 @@ export class RelayRoom extends DurableObject<Env> {
     this.evictStale();
     this.table.connected(this.conns());
     this.table.prune();
+    // Everyone has left and their places have lapsed: the table is not kept.
+    if (this.table.empty(this.sockets().length)) await this.ctx.storage.deleteAll();
     this.scheduleAlarm();
   }
 
@@ -337,6 +340,13 @@ export class RelayRoom extends DurableObject<Env> {
   }
 
   /** The room's own messages (state, rolls, achievements) go to every socket. */
+  private sendTo(id: string, msgs: Msg[]) {
+    for (const ws of this.ctx.getWebSockets(id)) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      for (const msg of msgs) ws.send(JSON.stringify({ type: "env", env: { from: SERVER_ID, to: "all", msg } }));
+    }
+  }
+
   private broadcast(msgs: Msg[]) {
     const sockets = this.sockets();
     for (const msg of msgs) {

@@ -4,7 +4,7 @@ import type { Faces } from "../src/game/rules";
 import type { Msg } from "../src/net/protocol";
 import { loginIdOf } from "../worker/src/peers";
 import { readRoomTicket, roomTicket } from "../worker/src/roomTicket";
-import { RECONNECT_GRACE_MS, TableServer, type Conn, type HouseTandem, type Saved } from "../worker/src/table";
+import { MIN_PLAYTIME_GAP_MS, RECONNECT_GRACE_MS, TableServer, type Conn, type HouseTandem, type Saved } from "../worker/src/table";
 
 const throwMsg = (source: "button" | "motion" = "button"): Msg => ({ t: "throw", input: { dir: [0, 1], speed: 0.5, spin: 0.5, source } });
 
@@ -232,11 +232,12 @@ describe("time in game (housetandem-web #37)", () => {
   const playtime = (s: unknown): Msg => ({ t: "playtime", s }) as Msg;
 
   it("credits the socket's verified account, clamped to 1..600 whole seconds", async () => {
-    const { table, plays, sent, saved, settle } = setup();
+    const { table, plays, sent, saved, settle, now } = setup();
     table.connected([A, B]);
     table.handle(A, hello("Ann"), false);
     const before = { sent: sent.length, saved: JSON.stringify(saved()) };
     table.handle(A, playtime(61.9), false);
+    now.t += 60_000;
     table.handle(A, playtime(5_000), false);
     await settle();
     expect(plays).toEqual([
@@ -246,6 +247,22 @@ describe("time in game (housetandem-web #37)", () => {
     // Bookkeeping only: nothing broadcast, the game isn't touched.
     expect(sent.length).toBe(before.sent);
     expect(JSON.stringify(saved())).toBe(before.saved);
+  });
+
+  it("passes on one report per account per 20 s, whichever connection sends it", async () => {
+    const { table, plays, settle, now } = setup();
+    const A2: Conn = { id: "a2", role: "player", userId: "11", loginId: 5 }; // the same account in another tab
+    table.connected([A, A2, OLD]);
+    for (let i = 0; i < 500; i++) table.handle(i % 2 ? A : A2, playtime(600), false);
+    table.handle(OLD, playtime(60), false); // someone else is not held back
+    await settle();
+    expect(plays.map((p) => p.userId)).toEqual(["11", "33"]);
+    now.t += MIN_PLAYTIME_GAP_MS - 1;
+    table.handle(A, playtime(60), false);
+    now.t += 1;
+    table.handle(A2, playtime(60), false);
+    await settle();
+    expect(plays.filter((p) => p.userId === "11")).toHaveLength(2);
   });
 
   it("ignores guests, remotes, junk and missing deltas", async () => {
@@ -284,5 +301,48 @@ describe("time in game (housetandem-web #37)", () => {
     expect(() => throwing.table.handle(A, playtime(60), false)).not.toThrow();
     await throwing.settle();
     expect(throwing.logs).toContain("recordPlay failed");
+  });
+});
+
+describe("a remote asking for the table", () => {
+  const R: Conn = { id: "r", role: "remote" };
+
+  it("is answered alone: nothing is broadcast or saved, however often it asks", () => {
+    const now = { t: 1_000 };
+    const all: Msg[] = [];
+    const direct: { to: string; msgs: Msg[] }[] = [];
+    let saves = 0;
+    const table = new TableServer({
+      plan: (rollId, shooter) => ({ rollId, shooter, faces: [1, 2], bodies: [] as never, frameCount: 1 }),
+      now: () => now.t,
+      broadcast: (msgs) => all.push(...msgs),
+      send: (to, msgs) => direct.push({ to, msgs }),
+      save: () => saves++,
+    });
+    table.connected([A, R]);
+    table.handle(A, hello("Ann"), false);
+    const before = { all: all.length, saves };
+    for (let i = 0; i < 200; i++) table.handle(R, { t: "remote-hello" }, true);
+    expect(all.length).toBe(before.all);
+    expect(saves).toBe(before.saves);
+    expect(direct).toHaveLength(200);
+    expect(direct[0]).toMatchObject({ to: "r", msgs: [{ t: "state" }] });
+    // A player's own messages still reach everyone and are saved.
+    table.handle(A, { t: "start", target: 5 }, false);
+    expect(all.length).toBeGreaterThan(before.all);
+    expect(saves).toBeGreaterThan(before.saves);
+  });
+
+  it("a table with nobody at it and nobody expected back is empty", () => {
+    const { table, now } = setup();
+    expect(table.empty(0)).toBe(true);
+    table.connected([A]);
+    table.handle(A, hello("Ann"), false);
+    expect(table.empty(1)).toBe(false);
+    table.connected([]); // Ann's connection dropped: her place is held
+    expect(table.empty(0)).toBe(false);
+    now.t += RECONNECT_GRACE_MS;
+    table.prune();
+    expect(table.empty(0)).toBe(true);
   });
 });

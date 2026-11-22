@@ -43,6 +43,8 @@ export interface HouseTandem {
 
 /** The account service caps each report at this anyway. */
 export const MAX_PLAYTIME_REPORT_S = 600;
+/** The game reports once a minute; an account's reports closer together than this are not passed on. */
+export const MIN_PLAYTIME_GAP_MS = 20_000;
 
 /** One connected socket. `userId` and `loginId` are set by the Worker after it verified a sign-in. */
 export type Conn = { id: string; role: "player" | "remote"; userId?: string; loginId?: number | null };
@@ -60,6 +62,8 @@ export type Saved = {
 export type TableDeps = {
   plan: PlanFn;
   broadcast: (msgs: Msg[]) => void;
+  /** To one connection only (a remote asking for the state). Falls back to broadcast. */
+  send?: (to: string, msgs: Msg[]) => void;
   save: (s: Saved) => void;
   ht?: HouseTandem;
   now?: () => number;
@@ -92,6 +96,14 @@ export class TableServer {
   private tracks = new Map<string, Track>();
   private byUser = new Map<string, Account>();
   private readonly now: () => number;
+
+  /** When each account last had a playtime report passed on. */
+  private readonly lastPlay = new Map<string, number>();
+
+  /** Nobody is here and nobody is expected back: nothing of this table needs keeping. */
+  empty(connected: number): boolean {
+    return connected === 0 && this.missingSince.size === 0;
+  }
 
   constructor(private readonly deps: TableDeps) {
     this.now = deps.now ?? Date.now;
@@ -163,6 +175,13 @@ export class TableServer {
       if (!remote) this.playtime(conn, msg.s);
       return;
     }
+    // A remote asking what the table looks like: answered to it alone. Nothing changed,
+    // so nothing is saved and nobody else hears it.
+    if (remote && msg.t === "remote-hello") {
+      const reply = this.authority.handle(conn.id, msg, true);
+      if (reply.length) (this.deps.send ?? ((_to, m) => this.deps.broadcast(m)))(conn.id, reply);
+      return;
+    }
     const prev = this.authority.game;
     const msgs = this.authority.handle(conn.id, msg, remote);
     if (!msgs.length) return;
@@ -184,6 +203,11 @@ export class TableServer {
     const userId = conn.role === "player" ? conn.userId : undefined;
     const n = Math.floor(Number(s));
     if (!ht || !userId || !Number.isFinite(n) || n < 1) return;
+    const t = this.now();
+    const last = this.lastPlay.get(userId);
+    if (last !== undefined && t - last < MIN_PLAYTIME_GAP_MS) return;
+    this.lastPlay.set(userId, t);
+    if (this.lastPlay.size > 500) this.lastPlay.delete(this.lastPlay.keys().next().value as string);
     const seconds = Math.min(MAX_PLAYTIME_REPORT_S, n);
     let work: Promise<unknown>;
     try {
