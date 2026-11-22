@@ -20,8 +20,8 @@
   // Rate limits per address, per minute (worker/src/limits.ts): Discord token exchanges, and new room connections.
   "unsafe": {
     "bindings": [
-      { "name": "TOKEN_RATE", "type": "ratelimit", "namespace_id": "4101", "simple": { "limit": 20, "period": 60 } },
-      { "name": "ROOM_RATE", "type": "ratelimit", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } }
+      { "name": "TOKEN_RATE", "type": "ratelimit", "namespace_id": "4101", "simple": { "limit": 300, "period": 60 } },
+      { "name": "ROOM_RATE", "type": "ratelimit", "namespace_id": "4102", "simple": { "limit": 600, "period": 60 } }
     ]
   },
   // The House Tandem account service (Tandemonium's API Worker): verifies sign-ins and saves
