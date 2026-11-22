@@ -8,9 +8,14 @@
  */
 export const KEY_RE = /^[0-9a-f]{32}$/;
 
-export async function playerIdFromKey(key: string): Promise<string> {
+/** SHA-256 of a key, as 64 hex chars. A remote's key is registered with the relay room as this (worker/src/remotes.ts). */
+export async function keyHash(key: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-  return Array.from(new Uint8Array(digest).slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function playerIdFromKey(key: string): Promise<string> {
+  return (await keyHash(key)).slice(0, 16);
 }
 
 export async function verifyPlayerKey(id: string, key: unknown): Promise<boolean> {

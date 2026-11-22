@@ -150,9 +150,12 @@ Optional secrets:
 
 ```bash
 npx wrangler secret put DISCORD_CLIENT_SECRET   # required for Discord
+npx wrangler secret put DISCORD_BOT_TOKEN       # checks a player is in the Activity instance before a room ticket is issued
 npx wrangler secret put TURN_KEY_ID             # Cloudflare Realtime TURN, improves WebRTC behind strict NATs
 npx wrangler secret put TURN_KEY_API_TOKEN
 ```
+
+With `DISCORD_BOT_TOKEN` set (the bot token of the same Discord application), `/api/token` asks Discord whether the player is in the Activity instance before it issues a room ticket for it. Without the secret that check is skipped, and the Worker says so once in its log.
 
 ## Discord Activity setup
 
@@ -191,7 +194,9 @@ src/
   remote/                 the 📱 shaker remote page (remote.html, served at /remote)
   render/                 Three.js table and dice
 worker/src/index.ts       Worker: assets, /api/token, /api/ice, RelayRoom Durable Object
-worker/src/roomTicket.ts  Discord room names and join tickets
+worker/src/roomTicket.ts  Discord room names and join tickets (12 hours each)
+worker/src/remotes.ts     which shaker remotes a room takes
+worker/src/limits.ts      message and request limits
 test/                     Vitest unit tests
 scripts/e2e.mjs           Playwright multi-player smoke test
 scripts/e2e-remote.mjs    Playwright shaker-remote test

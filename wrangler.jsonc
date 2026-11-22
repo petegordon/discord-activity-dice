@@ -17,6 +17,13 @@
     "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }],
+  // Rate limits per address, per minute (worker/src/limits.ts): Discord token exchanges, and new room connections.
+  "unsafe": {
+    "bindings": [
+      { "name": "TOKEN_RATE", "type": "ratelimit", "namespace_id": "4101", "simple": { "limit": 20, "period": 60 } },
+      { "name": "ROOM_RATE", "type": "ratelimit", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } }
+    ]
+  },
   // The House Tandem account service (Tandemonium's API Worker): verifies sign-ins and saves
   // dice achievements, over a private RPC binding (no shared secret). See worker/src/table.ts.
   "services": [{ "binding": "HT", "service": "tandemonium-api", "entrypoint": "HouseTandemGames" }],

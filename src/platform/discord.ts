@@ -3,12 +3,18 @@ import { apiBase, DISCORD_CLIENT_ID, peerServer } from "./env";
 import { newIdentity } from "../net/identityKey";
 import { sanitizeRoom } from "./identity";
 
+/** A token exchange the Worker couldn't finish is tried again this many times, this far apart (growing). */
+const TOKEN_RETRIES = 2;
+const TOKEN_RETRY_MS = 1_500;
+
 export type DiscordSession = {
   self: Self;
   roomId: string;
   /** Opens a URL in the system browser, after Discord's own confirmation. */
   openExternal: (url: string) => Promise<void>;
   mobile: boolean;
+  /** Room tickets expire; this asks the Worker for a new one for this session (undefined if it can't). */
+  refreshTicket: () => Promise<string | undefined>;
   /** The Worker found (or made) a House Tandem account for this Discord user, so achievements and time in game count. */
   signedIn: boolean;
 };
@@ -28,24 +34,37 @@ export async function startDiscord(): Promise<DiscordSession> {
   const sdk = new DiscordSDK(DISCORD_CLIENT_ID);
   await sdk.ready();
 
-  const { code } = await sdk.commands.authorize({
-    client_id: DISCORD_CLIENT_ID,
-    response_type: "code",
-    state: "",
-    prompt: "none",
-    scope: ["identify"],
-  });
-
   // A fresh id per session, so the same user on two devices doesn't collide.
   const identity = await newIdentity();
-  const res = await fetch(`${apiBase}/token`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code, instanceId: sdk.instanceId, playerId: identity.id }),
-  });
-  if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-  // `room` and `ticket` admit us to this instance's relay room (worker/src/roomTicket.ts).
-  const { access_token, room, ticket, signedIn } = (await res.json()) as { access_token: string; room?: string; ticket?: string; signedIn?: boolean };
+
+  type Grant = { access_token: string; room?: string; ticket?: string; signedIn?: boolean };
+  /**
+   * authorize → token exchange on our Worker. `room` and `ticket` admit us to
+   * this instance's relay room (worker/src/roomTicket.ts). The Worker says
+   * `retry` when it couldn't finish right now; each try needs a new code.
+   */
+  async function grant(): Promise<Grant> {
+    for (let attempt = 0; ; attempt++) {
+      const { code } = await sdk.commands.authorize({
+        client_id: DISCORD_CLIENT_ID,
+        response_type: "code",
+        state: "",
+        prompt: "none",
+        scope: ["identify"],
+      });
+      const res = await fetch(`${apiBase}/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, instanceId: sdk.instanceId, playerId: identity.id }),
+      });
+      if (res.ok) return (await res.json()) as Grant;
+      const again = ((await res.json().catch(() => ({}))) as { retry?: unknown }).retry === true;
+      if (!again || attempt >= TOKEN_RETRIES) throw new Error(`Token exchange failed (${res.status})`);
+      await new Promise((r) => setTimeout(r, TOKEN_RETRY_MS * (attempt + 1)));
+    }
+  }
+
+  const { access_token, room, ticket, signedIn } = await grant();
   const { user } = await sdk.commands.authenticate({ access_token });
 
   const avatarUrl = user.avatar
@@ -59,6 +78,7 @@ export async function startDiscord(): Promise<DiscordSession> {
       await sdk.commands.openExternalLink({ url });
     },
     mobile: String(sdk.platform) === "mobile",
+    refreshTicket: async () => (await grant()).ticket,
     signedIn: signedIn === true && !!ticket,
   };
 }
