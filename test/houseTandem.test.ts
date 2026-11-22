@@ -80,11 +80,11 @@ const ME = {
   },
 };
 
-function setup(href: string, routes: Parameters<typeof api>[0], stored: Record<string, string> = {}) {
+function setup(href: string, routes: Parameters<typeof api>[0], stored: Record<string, string> = {}, answer = true) {
   const p = page(href);
   const s = storage(stored);
   const a = api(routes);
-  const ht = createHouseTandem({ fetch: a.fetch, storage: s, tabStorage: storage(), location: p.loc as unknown as Location, history: p.history as unknown as History, now: () => NOW });
+  const ht = createHouseTandem({ fetch: a.fetch, storage: s, tabStorage: storage(), location: p.loc as unknown as Location, history: p.history as unknown as History, now: () => NOW, confirmSwitch: () => answer });
   return { ht, p, s, a };
 }
 
@@ -98,7 +98,7 @@ describe("tokenValid", () => {
   });
 });
 
-describe("back from Discord (#ht_auth)", () => {
+describe("an older redirect (#ht_auth), after a yes", () => {
   it("signs in, stores the session under the game's own key, and cleans the URL", async () => {
     const token = jwt();
     const { ht, p, s, a } = setup(`https://dice.example/?room=ABC#ht_auth=${token}&k=roomkey`, { "/me": ME });
@@ -124,6 +124,61 @@ describe("back from Discord (#ht_auth)", () => {
     const me = { json: { user: { id: 7, display_name: "Account Name", avatar_url: "https://example.com/a.png", identities: { discord: { avatar: "https://evil.example/a.png" } } } } };
     const { ht } = setup(`https://dice.example/#ht_auth=${jwt()}`, { "/me": me });
     expect((await ht.webSession())?.user).toEqual({ id: "7", name: "Account Name", avatar: undefined });
+  });
+});
+
+describe("a sign-in bound to this browser (#ht_result)", () => {
+  const signedInAs = (id: number, name: string) => ({ json: { token: jwt({ sub: id, name }), user: { id, name, avatar: null, identities: {} } } });
+  const me = (id: number, name: string) => ({ json: { user: { id, display_name: name, avatar_url: null, identities: {} } } });
+
+  it("swaps the code for a session with the value this tab kept", async () => {
+    const { ht, p, a } = setup("https://game.example/?room=ABC", {
+      "/auth/discord/begin": { json: { id: "r1", url: "https://api.example/go" } },
+      "/auth/exchange": signedInAs(7, "Pete"),
+      "/me": me(7, "Pete"),
+    });
+    await ht.beginSignIn();
+    const sentHash = a.calls[0].body.nonce_hash as string;
+    expect(sentHash).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    p.loc.hash = "#ht_result=r1.c0de";
+    const session = await ht.webSession();
+    expect(session?.user.name).toBe("Pete");
+    expect(p.url()).toBe("/?room=ABC");
+    const sent = a.calls.find((c) => c.url.endsWith("/auth/exchange"))!;
+    expect(sent.body.code).toBe("c0de");
+    expect(sent.body.nonce).toBeTruthy();
+    expect(sent.body.nonce).not.toBe(sentHash);
+  });
+
+  it("refuses a result this browser did not begin, without asking the service", async () => {
+    const { ht, a, p } = setup("https://game.example/#ht_result=r9.c0de", {});
+    expect(await ht.webSession()).toBeNull();
+    expect(a.calls).toEqual([]);
+    expect(p.url()).toBe("/");
+  });
+
+  it("keeps the session here when the player says no to another account", async () => {
+    const stored = jwt({ sub: 3, name: "Stored" });
+    const { ht, p, s } = setup("https://game.example/", {
+      "/auth/discord/begin": { json: { id: "r1", url: "https://api.example/go" } },
+      "/auth/exchange": signedInAs(9, "Other"),
+      "/me": me(3, "Stored"),
+    }, { [TOKEN_KEY]: stored }, false);
+    await ht.beginSignIn();
+    p.loc.hash = "#ht_result=r1.c0de";
+    const session = await ht.webSession();
+    expect(session?.token).toBe(stored);
+    expect(s.m.get(TOKEN_KEY)).toBe(stored);
+  });
+
+  it("a hand-off code for another account does not replace the session here without a yes", async () => {
+    const stored = jwt({ sub: 3, name: "Stored" });
+    const { ht, s } = setup("https://game.example/?ht_code=a.b", {
+      "/auth/handoff/redeem": signedInAs(9, "Other"),
+      "/me": me(3, "Stored"),
+    }, { [TOKEN_KEY]: stored }, false);
+    expect((await ht.webSession())?.token).toBe(stored);
+    expect(s.m.get(TOKEN_KEY)).toBe(stored);
   });
 });
 

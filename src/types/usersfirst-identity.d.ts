@@ -30,6 +30,8 @@ declare module "@usersfirst/identity/client" {
     now?: () => number;
     /** refresh(): any 401 ends the session (default: only `account_gone` does). */
     forgetOn401?: boolean;
+    /** Asked before a sign-in replaces a different account (default: the browser's confirm). */
+    confirmSwitch?: (q: { from: { name?: string } | null; to: { name?: string } }) => boolean | Promise<boolean>;
   };
   export type ApiAnswer = { ok: boolean; status: number; data: Record<string, any> };
 
@@ -37,7 +39,7 @@ declare module "@usersfirst/identity/client" {
   export function takeRedirect(
     loc?: Pick<Location, "hash" | "pathname" | "search">,
     hist?: Pick<History, "replaceState">,
-  ): { token?: string; link?: { id: string; code: string }; server?: string; steam?: string } | null;
+  ): { token?: string; result?: { id: string; code: string }; link?: { id: string; code: string }; server?: string; steam?: string } | null;
 
   export class IdentityClient {
     constructor(opts: IdentityOptions);
@@ -55,13 +57,13 @@ declare module "@usersfirst/identity/client" {
     signOut(): void;
     api(path: string, o?: { method?: string; body?: unknown; auth?: boolean }): Promise<ApiAnswer>;
     refresh(): Promise<IdentityUser | null>;
-    /** Back from a redirect: sign in with `#ht_auth` (an expired one is refused), or finish a link. Null: nothing to do. */
-    resume(): Promise<{ signedIn?: boolean; expired?: boolean; link?: string; error?: string; server?: string; steam?: string; after?: string } | null>;
+    /** Back from a redirect: swap `#ht_result` for a session (or an older `#ht_auth`, after a yes), or finish a link. Null: nothing to do. */
+    resume(): Promise<{ signedIn?: boolean; expired?: boolean; mismatch?: boolean; declined?: boolean; link?: string; error?: string; server?: string; steam?: string; after?: string } | null>;
     /** Take `?ht_code` off the address and swap it for a session. Null: there was no code. */
-    redeemHandoff(): Promise<{ signedIn: boolean; error?: string } | null>;
+    redeemHandoff(): Promise<{ signedIn: boolean; error?: string; declined?: boolean } | null>;
     begin(
       provider: "discord" | "steam",
-      o?: { mode?: "redirect" | "device"; link?: boolean; returnTo?: string; joinServer?: boolean; scopes?: string[] },
+      o?: { mode?: "redirect" | "device"; link?: boolean; returnTo?: string; joinServer?: boolean; scopes?: string[]; anyTab?: boolean },
     ): Promise<Record<string, any>>;
   }
 }

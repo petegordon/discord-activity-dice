@@ -3,7 +3,8 @@
  * (dice.housetandem.com). Inside Discord the Activity signs players in itself.
  *
  * - "Sign in with Discord" goes through the House Tandem account service and
- *   comes back here with the session in the URL fragment (#ht_auth=…).
+ *   comes back here with a single-use code (#ht_result=…), swapped for a session
+ *   with a value only this tab holds.
  * - A link from housetandem.com while signed in carries a one-time handoff
  *   code (?ht_code=…), swapped here for a session.
  *
@@ -31,7 +32,7 @@ const UNAVAILABLE = "Sign-in is unavailable right now";
 export type HtUser = { id: string; name: string; avatar?: string };
 export type HtSession = { token: string; user: HtUser };
 /** Stand-ins for the browser's own, for tests. */
-export type HtEnv = Pick<IdentityOptions, "fetch" | "storage" | "tabStorage" | "location" | "history" | "now">;
+export type HtEnv = Pick<IdentityOptions, "fetch" | "storage" | "tabStorage" | "location" | "history" | "now" | "confirmSwitch">;
 
 export function tokenValid(token: string | null | undefined, now: number = Date.now()): token is string {
   const c = token ? decodeToken(token) : null;
@@ -66,7 +67,7 @@ export function createHouseTandem(env: HtEnv = {}) {
 
   /** The signed-in session on this device, from a fresh sign-in, a handoff, or storage. */
   async function webSession(): Promise<HtSession | null> {
-    const back = await client.resume(); // #ht_auth, back from Discord
+    const back = await client.resume(); // #ht_result, back from Discord
     if (!back?.signedIn) await client.redeemHandoff(); // ?ht_code, from housetandem.com
     const token = client.token;
     if (!valid(token)) {
@@ -93,7 +94,7 @@ export function createHouseTandem(env: HtEnv = {}) {
 
   return {
     client,
-    /** Back from Discord: take #ht_auth off the URL (webSession does this itself, and signs in). */
+    /** An older redirect: take #ht_auth off the URL (webSession does this itself, and signs in). */
     takeRedirectToken: (): string | null => {
       const back = takeRedirect(loc(), hist());
       return back && valid(back.token) ? back.token : null;
