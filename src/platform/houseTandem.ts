@@ -17,7 +17,8 @@
  * side of it: a session within a minute of its end is not used, and the name and
  * picture shown are the Discord ones.
  */
-import { IdentityClient, decodeToken, takeRedirect, type IdentityOptions, type IdentityUser } from "@usersfirst/identity/client";
+import { IdentityClient, decodeToken, type IdentityOptions, type IdentityUser } from "@usersfirst/identity/client";
+import { askInPage } from "@usersfirst/identity/elements/ask-switch";
 
 export const HT_API: string = (import.meta.env.VITE_HT_API as string | undefined) || "https://tandemonium-api.pete-872.workers.dev";
 /**
@@ -48,9 +49,8 @@ function tableUser(u: IdentityUser): HtUser {
 
 export function createHouseTandem(env: HtEnv = {}) {
   // forgetOn401: a session the account service no longer takes is forgotten.
-  const client = new IdentityClient({ apiBase: HT_API, keys: KEYS, forgetOn401: true, ...env });
+  const client = new IdentityClient({ apiBase: HT_API, keys: KEYS, forgetOn401: true, confirmSwitch: askInPage, ...env });
   const loc = () => env.location ?? location;
-  const hist = () => env.history ?? history;
   const valid = (token: string | null | undefined): token is string => tokenValid(token, env.now ? env.now() : Date.now());
 
   /** Re-read the session's account. Null (and forgotten) if the account is gone or the service no longer takes the session. */
@@ -94,11 +94,6 @@ export function createHouseTandem(env: HtEnv = {}) {
 
   return {
     client,
-    /** An older redirect: take #ht_auth off the URL (webSession does this itself, and signs in). */
-    takeRedirectToken: (): string | null => {
-      const back = takeRedirect(loc(), hist());
-      return back && valid(back.token) ? back.token : null;
-    },
     /** From housetandem.com: swap ?ht_code for a session, and take it off the URL. */
     redeemHandoff: async (): Promise<string | null> => ((await client.redeemHandoff())?.signedIn ? client.token : null),
     /** Make `token` this device's session and read its account. */
@@ -119,7 +114,6 @@ export function createHouseTandem(env: HtEnv = {}) {
 let page: ReturnType<typeof createHouseTandem> | undefined;
 const ht = () => (page ??= createHouseTandem());
 
-export const takeRedirectToken = (): string | null => ht().takeRedirectToken();
 export const redeemHandoff = (): Promise<string | null> => ht().redeemHandoff();
 export const fetchUser = (token: string): Promise<HtUser | null> => ht().fetchUser(token);
 export const webSession = (): Promise<HtSession | null> => ht().webSession();
